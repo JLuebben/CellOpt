@@ -1,4 +1,5 @@
 import numpy as np
+from copy import deepcopy
 
 
 class SymmetryElement(object):
@@ -124,6 +125,7 @@ class ShelxlLine(object):
 
 class ShelxlAtom(object):
     def __init__(self, line):
+        self.rawData = line
         data = [word for word in line.split() if word]
         data = [float(word) if i else word for i, word in enumerate(data)]
         self.data = data
@@ -140,7 +142,7 @@ class ShelxlAtom(object):
             ShelxlParser.CURRENTMOLECULE.addAtom(self)
 
     def __str__(self):
-        return 'ATOM: ' + str(self.data)
+        return 'ATOM: {} {} {} {} {}'.format(self.name, self.sfac, self.frac, self.occ, self.adp)
 
 
 class ShelxlMolecule(object):
@@ -148,6 +150,7 @@ class ShelxlMolecule(object):
         self.sfacs = []
         self.customSfacData = {}
         self.atoms = []
+        self.atomDict = {}
         self.qPeaks = []
         self.cell = []
         self.cerr = []
@@ -228,17 +231,51 @@ class ShelxlMolecule(object):
         symm = SymmetryElement(data)
         self.eqivs[name] = symm
 
+    def getAtom(self, atomName):
+        if '_$' in atomName:
+            return self.getVirtualAtom(atomName)
+        return self.atomDict[atomName]
+
+    def getVirtualAtom(self, atomName):
+        base, equiv = atomName.split('_$')
+        symm = self.eqivs['$'+equiv]
+        atom = self.getAtom(base)
+        newFrac = (np.dot(atom.frac, symm.matrix) + symm.trans).flatten().tolist()[0]
+        vAtom = ShelxlAtom(atom.rawData)
+        vAtom.frac = newFrac
+        return vAtom
+
 
     def finalize(self):
-        # self._finalizeEqiv()
-        # return
+        self.atomDict = {}
+        for atom in self.atoms:
+            self.atomDict[atom.name] = atom
         self._finalizeDfix()
+        self.checkDfix()
 
 
-    def _finalizeEqiv(self):
-        for name, eqiv in self.eqivs.items():
-            newFrac = np.dot(atom.frac, symm.matrix) + symm.trans
-            print(name, eqiv)
+    def checkDfix(self):
+        vSum = 0
+        wSum = 0
+        sum = 0
+        i = 0
+        for atom1, dfixs in self.dfixTable.items():
+            for atom2, data in dfixs.items():
+                target, err = data
+                d = self.distance(self.getAtom(atom1), self.getAtom(atom2))
+                diff = abs(d-target)
+                vSum += diff * err
+                wSum += err
+                sum += diff
+                i += 1
+
+        print('         Mean difference: {:6.4f}'.format(sum/i))
+        print('Weighted mean difference: {:6.4f}'.format(vSum/wSum))
+
+    # def _finalizeEqiv(self):
+    #     for name, eqiv in self.eqivs.items():
+    #         newFrac = np.dot(atom.frac, symm.matrix) + symm.trans
+    #         print(name, eqiv)
 
     def _finalizeDfix(self):
         dfixTable = {atom.name.upper(): {} for atom in self.atoms}
@@ -273,8 +310,7 @@ class ShelxlMolecule(object):
                     tableRow2[atom1] = (target, err)
                 # else:
                 #     tableField2.append((target, err))
-        for k, v in dfixTable.items():
-            print(k, v)
+        self.dfixTable = dfixTable
 
 class ShelxlParser(object):
     CURRENTMOLECULE = None
