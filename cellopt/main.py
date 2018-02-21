@@ -7,7 +7,10 @@ from os.path import dirname,join
 
 def callShelxl(fileName):
     FNULL = open(os.devnull, 'w')
-    call(['shelxl.exe', fileName], stdout=FNULL, stderr=STDOUT)
+    try:
+        call(['shelxl.exe', fileName], stdout=FNULL, stderr=STDOUT)
+    except:
+        call(['shelxl', fileName], stdout=FNULL, stderr=STDOUT)
 
 def evaluate(fileName):
     callShelxl(fileName)
@@ -28,7 +31,9 @@ def run(fileName):
     fileDir = dirname(resFileName)
     copyfile(join(fileDir, fileName+'.hkl'), './work.hkl')
     reader = ShelxlReader()
-    reader.read(resFileName)
+    molecule = reader.read(resFileName)
+    reader.toP1()
+    # exit()
     # print(molecule.checkDfix())
     cell = reader['cell'].split()
     originalCell = [float(x) for x in cell[2:]]
@@ -63,6 +68,7 @@ def run(fileName):
         bestW = 999999
         bestWj = None
         for j, job in enumerate(jobs):
+            print(' substep: {}/{}'.format( j+1, len(jobs)))
             newCell = cell[:2] + ['{:7.4f}'.format(p) for p in job] + cell[5:]
             newCell = ' '.join(newCell) + '\n'
             # print(newCell)
@@ -82,12 +88,15 @@ def run(fileName):
         print('   Old Cell:              ', [float(x) for x in cell[2:5]])
         print('   Best wR2:            ', bestRj, jobs[bestRj])
         print('   Best mean:           ', bestmeanj, jobs[bestmeanj])
-        print('   !Best weighted mean: ',  bestWj, jobs[bestWj], '!')
+        print('  !Best weighted mean:  ',  bestWj, jobs[bestWj], '!')
         # input()
         cell = cell[:2] + ['{:7.4f}'.format(p) for p in jobs[bestWj]] + cell[5:]
         if bestWj == 0:
             print('No improvements found. Decreasing step size.')
             delta = delta/2
+            if delta < 0.005:
+                print('Converged.')
+                break
             if i-lastImprovement>5:
                 print('No improvements since 5 steps. Terminating.')
                 break

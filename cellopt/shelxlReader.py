@@ -45,6 +45,13 @@ class SymmetryElement(object):
                                              vvv=self.trans[2])
         return string
 
+    def __eq__(self, other):
+        m = (self.matrix == other.matrix).all()
+        t1 = np.array([v % 1 for v in self.trans])
+        t2 = np.array([v % 1 for v in other.trans])
+        t = (t1 == t2).all()
+        return m and t
+
     def applyLattSymm(self, lattSymm):
         """
         Copies SymmetryElement instance and returns the copy after applying the translational part of 'lattSymm'.
@@ -196,6 +203,43 @@ class ShelxlMolecule(object):
             alpha) * dy * dz + 2 * a * c * np.cos(beta) * dx * dz + 2 * a * b * np.cos(gamma) * dx * dy
         return dd ** .5
 
+    def asP1(self):
+        p1Atoms = {i+2: [] for i in range(len(self.symms))}
+        p1Mol = deepcopy(self)
+        p1Mol.symms = []
+        p1Mol.centric = False
+        p1Mol.lattOps = []
+        for atom in self.atoms:
+            # p1Mol.addAtom(atom)
+            for i, symm in enumerate(self.symms):
+
+                newFrac = (np.dot(atom.frac, symm.matrix) + symm.trans).flatten().tolist()[0]
+                vAtom = ShelxlAtom(atom.rawData, virtual=True)
+                vAtom.frac = newFrac
+                # vAtom.name += 'X{}'.format(i)
+                vAtom.occ = (10,1)
+                atom.occ = (10,1)
+                distance = self.distance(atom, vAtom)
+                if distance < 0.1:
+                    print('Atom {} on special position. (SYMM {})'.format(atom.name, i))
+                else:
+                    p1Atoms[i+2].append(vAtom)
+                    p1Mol.addAtom(vAtom)
+
+                for key, eqiv in self.eqivs.items():
+                    if symm == eqiv:
+                        print(i, key)
+                        print(symm)
+                        print(eqiv)
+                        print()
+        exit()
+        p1AtomList = []
+        for key, values in p1Atoms.items():
+            p1AtomList.append(ShelxlLine('RESI sym {}'.format(key)))
+            for value in values:
+                p1AtomList.append(value)
+        return p1Mol, p1AtomList
+
     def addAtom(self, atom):
         self.atoms.append(atom)
 
@@ -238,6 +282,7 @@ class ShelxlMolecule(object):
 
     def setCentric(self, value):
         self.centric = value
+        self.symms.append(SymmetryElement(['-X', '-Y', '-Z']))
 
     def setLattOps(self, lattOps):
         self.lattOps = lattOps
@@ -359,6 +404,7 @@ class ShelxlReader(object):
         molecule.finalize()
         ShelxlReader.CURRENTMOLECULE = None
         ShelxlReader.CURRENTINSTANCE = None
+        self.molecule = molecule
         return molecule
 
     def write(self, fileName='out.res'):
@@ -371,6 +417,19 @@ class ShelxlReader(object):
                     fp.write(line.write())
                 else:
                     fp.write(data+'\n')
+
+    def toP1(self):
+        self.molecule, newAtoms = self.molecule.asP1()
+        for i, line in enumerate(self.lines):
+            if line.key is 'latt':
+               self.lines[i] = ShelxlLine('LATT -1')
+            if line.key is 'symm':
+                self.lines[i] = ShelxlLine('')
+            if line.key is 'hklf':
+                self.lines = self.lines[:i] + newAtoms + self.lines[i:]
+        # for line in self.lines:
+        #     print(line.write())
+        # self.write('p1.ins')
 
     def __getitem__(self, item):
         return self._shelxlDict[item]
@@ -429,7 +488,7 @@ class LineParser(BaseParser):
                          'DANG': self.doNothing,
                          'AFIX': self.doNothing,
                          'PART': self.doNothing,
-                         'HKLF': self.doNothing,
+                         'HKLF': HklfParser,
                          'ABIN': self.doNothing,
                          'ANIS': self.doNothing,
                          'ANSC': self.doNothing,
@@ -582,6 +641,7 @@ class LattParser(BaseParser):
                 7: [SymmetryElement(('.5', '.5', '0'))],
                 }
     RETURNTYPE = ShelxlLine
+    KEY = 'latt'
 
     def finished(self):
         data = [word for word in self.body.split() if word]
@@ -594,6 +654,7 @@ class LattParser(BaseParser):
 
 class SymmParser(BaseParser):
     RETURNTYPE = ShelxlLine
+    KEY = 'symm'
 
     def finished(self):
         symmData = self.body[4:].split(',')
@@ -628,6 +689,11 @@ class EqivParser(BaseParser):
         data = ' '.join(data)
         data = data.split(',')
         ShelxlReader.CURRENTMOLECULE.addEqiv(name, data)
+
+
+class HklfParser(BaseParser):
+    RETURNTYPE = ShelxlLine
+    KEY = 'hklf'
 
 
 class Reader(object):
