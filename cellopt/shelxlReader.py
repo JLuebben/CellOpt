@@ -115,34 +115,48 @@ class SymmetryElement(object):
             return 0, symm
 
 class ShelxlLine(object):
-    def __init__(self, line):
+    def __init__(self, line, key=None):
         self.line = line
+        self.key = key
         # print(self.line)
 
     def __str__(self):
         return 'LINE: ' + self.line
 
+    def write(self):
+        return self.line+'\n'
+
 
 class ShelxlAtom(object):
-    def __init__(self, line):
+    def __init__(self, line, virtual=False, key=None):
         self.rawData = line
+        self.key = key
         data = [word for word in line.split() if word]
         data = [float(word) if i else word for i, word in enumerate(data)]
         self.data = data
         self.name = data[0]
-        self.sfac = data[1]
+        self.sfac = int(data[1])
         self.frac = np.array(data[2:5])
         self.occ = (data[5] // 1, data[5] % 1)
         self.adp = np.array(data[6:])
+        if virtual:
+            return
         if self.name[0].upper() == 'Q':
             self.qPeak = True
-            ShelxlParser.CURRENTMOLECULE.addQPeak(self)
+            ShelxlReader.CURRENTMOLECULE.addQPeak(self)
         else:
             self.qPeak = False
-            ShelxlParser.CURRENTMOLECULE.addAtom(self)
+            ShelxlReader.CURRENTMOLECULE.addAtom(self)
 
     def __str__(self):
         return 'ATOM: {} {} {} {} {}'.format(self.name, self.sfac, self.frac, self.occ, self.adp)
+
+    def write(self):
+        return '{name:8} {sfac} {frac} {occ:6.3f} {adp}\n'.format(name=self.name,
+                                                                sfac=self.sfac,
+                                                                frac=' '.join(['{:6.4f}'.format(c) for c in self.frac]),
+                                                                occ=sum(self.occ),
+                                                                adp=' '.join(['{:6.4f}'.format(c) for c in self.adp]))
 
 
 class ShelxlMolecule(object):
@@ -160,6 +174,10 @@ class ShelxlMolecule(object):
         self.eqivs = {}
         self.dfixs = []
         self.dfixErr = 0.02
+
+    def __iter__(self):
+        for atom in self.atoms:
+            yield atom
 
     def distance(self, atom1, atom2):
         x, y, z = atom1.frac
@@ -241,7 +259,7 @@ class ShelxlMolecule(object):
         symm = self.eqivs['$'+equiv]
         atom = self.getAtom(base)
         newFrac = (np.dot(atom.frac, symm.matrix) + symm.trans).flatten().tolist()[0]
-        vAtom = ShelxlAtom(atom.rawData)
+        vAtom = ShelxlAtom(atom.rawData, virtual=True)
         vAtom.frac = newFrac
         return vAtom
 
@@ -251,7 +269,7 @@ class ShelxlMolecule(object):
         for atom in self.atoms:
             self.atomDict[atom.name] = atom
         self._finalizeDfix()
-        self.checkDfix()
+        # self.checkDfix()
 
 
     def checkDfix(self):
@@ -263,19 +281,16 @@ class ShelxlMolecule(object):
             for atom2, data in dfixs.items():
                 target, err = data
                 d = self.distance(self.getAtom(atom1), self.getAtom(atom2))
-                diff = abs(d-target)
+                diff = abs(d-target)**2
                 vSum += diff * err
                 wSum += err
                 sum += diff
                 i += 1
 
-        print('         Mean difference: {:6.4f}'.format(sum/i))
-        print('Weighted mean difference: {:6.4f}'.format(vSum/wSum))
+        return (sum/i)**.5, (vSum/wSum)**.5
+        # print('         Mean squared difference: {:6.4f}'.format((sum/i)**.5))
+        # print('Weighted mean squared difference: {:6.4f}'.format((vSum/wSum)**.5))
 
-    # def _finalizeEqiv(self):
-    #     for name, eqiv in self.eqivs.items():
-    #         newFrac = np.dot(atom.frac, symm.matrix) + symm.trans
-    #         print(name, eqiv)
 
     def _finalizeDfix(self):
         dfixTable = {atom.name.upper(): {} for atom in self.atoms}
@@ -312,15 +327,18 @@ class ShelxlMolecule(object):
                 #     tableField2.append((target, err))
         self.dfixTable = dfixTable
 
-class ShelxlParser(object):
+class ShelxlReader(object):
     CURRENTMOLECULE = None
+    CURRENTINSTANCE = None
 
     def __init__(self):
         self.lines = []
         self.atoms = []
+        self._shelxlDict = {}
 
     def read(self, fileName):
-        ShelxlParser.CURRENTMOLECULE = ShelxlMolecule()
+        ShelxlReader.CURRENTMOLECULE = ShelxlMolecule()
+        ShelxlReader.CURRENTINSTANCE = self
         parser = LineParser()
         with Reader(fileName) as reader:
             for line in reader.readlines():
@@ -337,13 +355,32 @@ class ShelxlParser(object):
             # for atom2 in self.CURRENTMOLECULE.atoms:
             #     print(self.CURRENTMOLECULE.distance( atom1, atom2))
             # print(atom1.name)
-        molecule = ShelxlParser.CURRENTMOLECULE
+        molecule = ShelxlReader.CURRENTMOLECULE
         molecule.finalize()
-        ShelxlParser.CURRENTMOLECULE = None
+        ShelxlReader.CURRENTMOLECULE = None
+        ShelxlReader.CURRENTINSTANCE = None
+        return molecule
 
+    def write(self, fileName='out.res'):
+        with open(fileName, 'w') as fp:
+            for line in self.lines:
+                key = line.key
+                try:
+                    data = self[key]
+                except KeyError:
+                    fp.write(line.write())
+                else:
+                    fp.write(data+'\n')
+
+    def __getitem__(self, item):
+        return self._shelxlDict[item]
+
+    def __setitem__(self, key, value):
+        self._shelxlDict[key] = value
 
 class BaseParser(object):
     RETURNTYPE = None
+    KEY = None
 
     def __init__(self, line):
         self.body = line
@@ -355,7 +392,7 @@ class BaseParser(object):
     def get(self, previousParser):
         if not self.body.endswith('='):
             self.finished()
-            return previousParser, self.RETURNTYPE(self.body)
+            return previousParser, self.RETURNTYPE(self.body, key=self.KEY)
         else:
             self.body = self.body[:-1]
             return self, None
@@ -488,24 +525,32 @@ class AtomParser(BaseParser):
 
 class CellParser(BaseParser):
     RETURNTYPE = ShelxlLine
+    KEY = 'cell'
 
     def finished(self):
         data = np.array([float(word) for word in self.body.split()[1:] if word])
-        ShelxlParser.CURRENTMOLECULE.setCell(data[1:])
-        ShelxlParser.CURRENTMOLECULE.setWavelength(data[0])
+        ShelxlReader.CURRENTMOLECULE.setCell(data[1:])
+        ShelxlReader.CURRENTMOLECULE.setWavelength(data[0])
+        ShelxlReader.CURRENTINSTANCE['cell'] = self.body
 
 
 class CerrParser(BaseParser):
     RETURNTYPE = ShelxlLine
+    KEY = 'cerr'
 
     def finished(self):
         data = np.array([float(word) for word in self.body.split()[1:] if word])
-        ShelxlParser.CURRENTMOLECULE.setCerr(data[1:])
-        ShelxlParser.CURRENTMOLECULE.setZ(data[0])
+        ShelxlReader.CURRENTMOLECULE.setCerr(data[1:])
+        ShelxlReader.CURRENTMOLECULE.setZ(data[0])
 
 
 class SfacParser(BaseParser):
     RETURNTYPE = ShelxlLine
+
+    def __call__(self, line):
+
+        self.body = self.body+'=\n'+line
+        return LineParser(), ShelxlLine(self.body)
 
     def finished(self):
         custom = False
@@ -520,9 +565,9 @@ class SfacParser(BaseParser):
                 break
         if not custom:
             for sfac in words:
-                ShelxlParser.CURRENTMOLECULE.addSfac(sfac)
+                ShelxlReader.CURRENTMOLECULE.addSfac(sfac)
         else:
-            ShelxlParser.CURRENTMOLECULE.addCustomSfac(words)
+            ShelxlReader.CURRENTMOLECULE.addCustomSfac(words)
 
 
 class LattParser(BaseParser):
@@ -542,9 +587,9 @@ class LattParser(BaseParser):
         data = [word for word in self.body.split() if word]
         latt = int(data[-1])
         if latt > 0:
-            ShelxlParser.CURRENTMOLECULE.setCentric(True)
+            ShelxlReader.CURRENTMOLECULE.setCentric(True)
         lattOps = LattParser.LATTDICT[abs(latt)]
-        ShelxlParser.CURRENTMOLECULE.setLattOps(lattOps)
+        ShelxlReader.CURRENTMOLECULE.setLattOps(lattOps)
 
 
 class SymmParser(BaseParser):
@@ -552,7 +597,7 @@ class SymmParser(BaseParser):
 
     def finished(self):
         symmData = self.body[4:].split(',')
-        ShelxlParser.CURRENTMOLECULE.addSymm(symmData)
+        ShelxlReader.CURRENTMOLECULE.addSymm(symmData)
 
 
 class DfixParser(BaseParser):
@@ -571,7 +616,7 @@ class DfixParser(BaseParser):
         for i in range(len(data)//2):
             i, j = 2*i, 2*i+1
             pairs.append((data[i], data[j]))
-            ShelxlParser.CURRENTMOLECULE.addDfix(value, err, pairs)
+            ShelxlReader.CURRENTMOLECULE.addDfix(value, err, pairs)
 
 
 class EqivParser(BaseParser):
@@ -582,7 +627,7 @@ class EqivParser(BaseParser):
         name = data.pop(0)
         data = ' '.join(data)
         data = data.split(',')
-        ShelxlParser.CURRENTMOLECULE.addEqiv(name, data)
+        ShelxlReader.CURRENTMOLECULE.addEqiv(name, data)
 
 
 class Reader(object):
@@ -677,4 +722,6 @@ class Reader(object):
 
 
 if __name__ == '__main__':
-    ShelxlParser().read('s1.ins')
+    shelxlFile = ShelxlReader()
+    molecule = shelxlFile.read('s1.ins')
+    print(molecule.checkDfix())
