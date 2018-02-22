@@ -226,13 +226,13 @@ class ShelxlMolecule(object):
                     p1Atoms[i+2].append(vAtom)
                     p1Mol.addAtom(vAtom)
 
-                for key, eqiv in self.eqivs.items():
-                    if symm == eqiv:
-                        print(i, key)
-                        print(symm)
-                        print(eqiv)
-                        print()
-        exit()
+        #         for key, eqiv in self.eqivs.items():
+        #             if symm == eqiv:
+        #                 print(i, key)
+        #                 print(symm)
+        #                 print(eqiv)
+        #                 print()
+        # exit()
         p1AtomList = []
         for key, values in p1Atoms.items():
             p1AtomList.append(ShelxlLine('RESI sym {}'.format(key)))

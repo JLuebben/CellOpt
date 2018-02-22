@@ -2,7 +2,17 @@ from cellopt.shelxlReader import ShelxlReader
 from subprocess import call, STDOUT
 from shutil import copyfile
 import os
-from os.path import dirname,join
+import sys
+import argparse
+from os.path import dirname, join
+
+CLASSPARAMETERS = {'triclinic': ((0, 1, 2, 3, 4, 5), {}),
+                   'monoclinic': ((0, 1, 2, 4), {}),
+                   'orthorhombic': ((0, 1, 2), {}),
+                   'tetragonal': ((0, 2), {1: 0}),
+                   'rhombohedral': ((0, 3), {0: (1, 2), 3: (4, 5)}),
+                   'hexagonal': ((0, 2), {0: (1,)}),
+                   'cubic': ((0,), {0: (1, 2)})}
 
 
 def callShelxl(fileName):
@@ -11,6 +21,7 @@ def callShelxl(fileName):
         call(['shelxl.exe', fileName], stdout=FNULL, stderr=STDOUT)
     except:
         call(['shelxl', fileName], stdout=FNULL, stderr=STDOUT)
+
 
 def evaluate(fileName):
     callShelxl(fileName)
@@ -22,42 +33,93 @@ def evaluate(fileName):
                 wR2 = float(line[2][:-1])
                 break
     reader = ShelxlReader()
-    molecule = reader.read(fileName+'.res')
+    molecule = reader.read(fileName + '.res')
     mean, weighted = molecule.checkDfix()
     return wR2, mean, weighted
 
-def run(fileName):
+
+def determineCrystalClass(cell):
+    a, b, c, A, B, C = cell[2:]
+    cls = 'triclinic'
+    if a == b == c and A == B == C and int(float(A)) == 90:
+        cls = 'cubic'
+    elif a == b and A == B == C and int(float(A)) == 120:
+        cls = 'hexagonal'
+    elif a == b == c and A == B == C and not int(float(A)) == 90:
+        cls = 'rhombohedral'
+    elif a == b and A == B == C and int(float(A)) == 90:
+        cls = 'tetragonal'
+    elif a != b != c and A == B == C and int(float(A)) == 90:
+        cls = 'orthorhombic'
+    elif a != b != c and A == C and int(float(A)) == 90 and not int(float(B)) == 90:
+        cls = 'monoclinic'
+    return cls, CLASSPARAMETERS[cls]
+
+
+def run(fileName, p1=False, overrideClass=None):
     resFileName = fileName + '.res'
     fileDir = dirname(resFileName)
-    copyfile(join(fileDir, fileName+'.hkl'), './work.hkl')
+    copyfile(join(fileDir, fileName + '.hkl'), './work.hkl')
     reader = ShelxlReader()
     molecule = reader.read(resFileName)
-    reader.toP1()
+    # reader.toP1()
     # exit()
     # print(molecule.checkDfix())
     cell = reader['cell'].split()
+    cls, params = determineCrystalClass(cell)
+    if overrideClass:
+        cls = overrideClass
+        params = CLASSPARAMETERS[cls]
+    print('Crystal Class is {}.'.format(cls))
+    if p1:
+        print('Expanding to P1.')
+        reader.toP1()
+        cls = 'triclinic'
+        params = CLASSPARAMETERS[cls]
+    # print(params, cell)
+    # exit()
     originalCell = [float(x) for x in cell[2:]]
 
-    delta = .1
+    delta = .5
     lastImprovement = 0
 
-    maxI = 100
-    # for i in range(maxI):
-    #     print('Step {}/{}'.format(i+1, maxI))
+    startDiff = None
+    lastDiff = 9999
+
     i = -1
     while True:
-        print('Step', i+1)
-        i+=1
-        a, b, c = [float(x) for x in cell[2:5]]
-        params = (a, b, c)
-        jobs = [params]
-        for j, p in enumerate(params):
-            job1 = list(params)
-            job1[j] = job1[j] - delta
-            jobs.append(job1)
-            job2 = list(params)
-            job2[j] = job2[j] + delta
-            jobs.append(job2)
+        # print('Step', i + 1)
+        i += 1
+        data = [float(x) for x in cell[2:]]
+        # a, b, c = [float(x) for x in cell[2:5]]
+        # params = (a, b, c)
+        jobs = [data]
+        # for j, p in enumerate(params):
+        #     job1 = list(params)
+        #     job1[j] = job1[j] - delta
+        #     jobs.append(job1)
+        #     job2 = list(params)
+        #     job2[j] = job2[j] + delta
+        #     jobs.append(job2)
+        conDict = params[1]
+        for p in params[0]:
+            try:
+                cons = conDict[p]
+            except:
+                cons = []
+            j = data[:]
+            j[p] -= delta
+            for con in cons:
+                j[con] = j[p]
+            jobs.append(j)
+
+            j = data[:]
+            j[p] += delta
+            for con in cons:
+                j[con] = j[p]
+            jobs.append(j)
+        # print(jobs)
+        # exit()
 
         bestR = 999999
         bestRj = None
@@ -65,16 +127,26 @@ def run(fileName):
         bestmean = 999999
         bestmeanj = None
 
-        bestW = 999999
-        bestWj = None
+        bestW = lastDiff
+        bestWj = 0
+        numJobs = len(jobs)
+        barLengths = 60
         for j, job in enumerate(jobs):
-            print(' substep: {}/{}'.format( j+1, len(jobs)))
-            newCell = cell[:2] + ['{:7.4f}'.format(p) for p in job] + cell[5:]
+            progress = (j + 1) / numJobs
+            # sys.stdout.write('\r substep: {}/{}'.format(j + 1, len(jobs)))
+            # sys.stdout.write('\r {}'.format(progress))
+            progress = int(barLengths * progress)
+            sys.stdout.write('\r Step {:3} ['.format(i + 1) + progress * '#' + (barLengths - progress) * '-' + ']')
+            sys.stdout.flush()
+            newCell = cell[:2] + ['{:7.4f}'.format(p) for p in job]  # + cell[5:]
+            # print(newCell)
+            # exit()
             newCell = ' '.join(newCell) + '\n'
             # print(newCell)
             reader['cell'] = newCell
             reader.write(fileName='work.ins')
             wR2, mean, weighted = evaluate('work')
+            # print(weighted)
             if wR2 < bestR:
                 bestR = wR2
                 bestRj = j
@@ -85,28 +157,89 @@ def run(fileName):
                 bestW = weighted
                 bestWj = j
 
-        print('   Old Cell:              ', [float(x) for x in cell[2:5]])
-        print('   Best wR2:            ', bestRj, jobs[bestRj])
-        print('   Best mean:           ', bestmeanj, jobs[bestmeanj])
-        print('  !Best weighted mean:  ',  bestWj, jobs[bestWj], '!')
+            if not startDiff:
+                startDiff = weighted
+        print()
+        print()
+        # jString = j2Name(bestWj)
+        # print('  ', jString)
+        print('   Old Cell:  ', cell2String(cell[2:], offset=15))
+        print()
+        # print('   Best wR2:            ', bestRj, cell2String(jobs[bestRj]))
+        # print('   Best mean:           ', bestmeanj, cell2String(jobs[bestmeanj]))
+        print('   New Cell:  ', cell2String(jobs[bestWj], offset=15))
+        print()
+        print('   DFIX Fit:     {:7.5f} / {:7.5f}\n'.format(bestW, startDiff))
         # input()
-        cell = cell[:2] + ['{:7.4f}'.format(p) for p in jobs[bestWj]] + cell[5:]
+        cell = cell[:2] + ['{:7.4f}'.format(p) for p in jobs[bestWj]]  # + cell[5:]
+        lastDiff = bestW
         if bestWj == 0:
-            print('No improvements found. Decreasing step size.')
-            delta = delta/2
+            # print('No improvements found. Decreasing step size.')
+            delta = delta / 2
             if delta < 0.005:
                 print('Converged.')
                 break
-            if i-lastImprovement>5:
+            if i - lastImprovement > 5:
                 print('No improvements since 5 steps. Terminating.')
                 break
         else:
             lastImprovement = i
         # print(reader['cell'])
-    print('\n\nOriginal Cell:', originalCell)
-    print('   Final Cell:', [float(x) for x in cell[2:]])
+    print('\n\nOriginal Cell:', cell2String(originalCell, offset=15))
+    print('   Final Cell:', cell2String(cell[2:], offset=15))
+
+    print('\nOriginal DFIX fit: {:8.6f}'.format(startDiff))
+    print('   Final DFIX fit: {:8.6f}'.format(bestW))
+
+JDICT = {0: 'a',
+         1: 'b',
+         2: 'c',
+         3: 'alpha',
+         4: 'beta',
+         5: 'gamma'}
+
+def j2Name(j):
+    # print(j)
+    if not j:
+        return 'No modifications.'
+    j -= 1
+    j = j//2
+    name = ('Incremented ' if j%2 else 'Decremented ') + JDICT[j]
+    # print(name)
+    return name
+
+
+def cell2String(cell, offset=0):
+    cell = [float(x) for x in cell]
+    return '{a:9.4f} {A:9.4f}\n{offset}{b:9.4f} {B:9.4f}\n{offset}{c:9.4f} {C:9.4f}'.format(a=cell[0],
+                                                                                            b=cell[1],
+                                                                                            c=cell[2],
+                                                                                            A=cell[3],
+                                                                                            B=cell[4],
+                                                                                            C=cell[5],
+                                                                                            offset=' ' * offset)
 
 
 if __name__ == '__main__':
-    from sys import argv
-    run('s1')
+    parser = argparse.ArgumentParser(description='Refine cell parameters against distance restraints.')
+    parser.add_argument('fileName', type=str, nargs=1, help='Name of a shelxl result file.')
+    parser.add_argument('-c', '--class', type=str, default=None, nargs=1,
+                        help='Crystal class constrains for refinement.\nWARNING: The crystal class is ONLY used to'
+                             'constrain the cell parameter refinement, and is NOT used to modify the structure'
+                             'accordingly. Use this option with care.',
+                        choices=['triclinic',
+                                 'monoclinic',
+                                 'orthorhombic',
+                                 'tetragonal',
+                                 'rhombohedral',
+                                 'hexagonal',
+                                 'cubic'])
+    parser.add_argument('--expand', action='store_true',
+                        help='Expand structure to P1 before refinement. --class argument will be ignored.')
+    args = parser.parse_args()
+    expand = args.expand
+    crystalClass = args.__dict__['class']
+    fileName = args.fileName[0]
+    # print(fileName)
+    # crystalClass = 'monoclinic'
+    run(fileName, p1=expand, overrideClass=crystalClass)
