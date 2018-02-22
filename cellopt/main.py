@@ -129,6 +129,8 @@ def run(fileName, p1=False, overrideClass=None):
 
         bestW = lastDiff
         bestWj = 0
+        bestRW = 9999
+
         numJobs = len(jobs)
         barLengths = 60
         for j, job in enumerate(jobs):
@@ -156,6 +158,7 @@ def run(fileName, p1=False, overrideClass=None):
             if weighted < bestW:
                 bestW = weighted
                 bestWj = j
+                bestRW = wR2
 
             if not startDiff:
                 startDiff = weighted
@@ -170,6 +173,7 @@ def run(fileName, p1=False, overrideClass=None):
         print('   New Cell:  ', cell2String(jobs[bestWj], offset=15))
         print()
         print('   DFIX Fit:     {:7.5f} / {:7.5f}\n'.format(bestW, startDiff))
+        print('   Current wR2:  {:7.5f}\n'.format(bestRW))
         # input()
         cell = cell[:2] + ['{:7.4f}'.format(p) for p in jobs[bestWj]]  # + cell[5:]
         lastDiff = bestW
@@ -224,7 +228,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Refine cell parameters against distance restraints.')
     parser.add_argument('fileName', type=str, nargs=1, help='Name of a shelxl result file.')
     parser.add_argument('-c', '--class', type=str, default=None, nargs=1,
-                        help='Crystal class constrains for refinement.\nWARNING: The crystal class is ONLY used to'
+                        help='Crystal class constraints for refinement.\nWARNING: The crystal class is ONLY used to'
                              'constrain the cell parameter refinement, and is NOT used to modify the structure'
                              'accordingly. Use this option with care.',
                         choices=['triclinic',
@@ -238,6 +242,7 @@ if __name__ == '__main__':
                         help='Expand structure to P1 before refinement. --class argument will be ignored.')
     args = parser.parse_args()
     expand = args.expand
+    # expand = True
     crystalClass = args.__dict__['class']
     fileName = args.fileName[0]
     # print(fileName)

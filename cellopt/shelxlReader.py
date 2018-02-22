@@ -8,7 +8,6 @@ class SymmetryElement(object):
     """
     symm_ID = 1
 
-
     def __init__(self, symms, centric=False):
         """
         Constructor.
@@ -60,11 +59,10 @@ class SymmetryElement(object):
         """
         # newSymm = deepcopy(self)
         newSymm = SymmetryElement(self.toShelxl().split(','))
-        newSymm.trans = [(self.trans[0] + lattSymm.trans[0])/1,
-                            (self.trans[1] + lattSymm.trans[1])/1,
-                            (self.trans[2] + lattSymm.trans[2])/1]
+        newSymm.trans = [(self.trans[0] + lattSymm.trans[0]) / 1,
+                         (self.trans[1] + lattSymm.trans[1]) / 1,
+                         (self.trans[2] + lattSymm.trans[2]) / 1]
         return newSymm
-
 
     def toShelxl(self):
         """
@@ -79,7 +77,7 @@ class SymmetryElement(object):
             for j in range(3):
                 s = '' if not self.matrix[i, j] else axes[j]
                 if self.matrix[i, j] < 0:
-                    s = '-'+s
+                    s = '-' + s
                 elif s:
                     s = '+' + s
                 text += s
@@ -121,6 +119,7 @@ class SymmetryElement(object):
         else:
             return 0, symm
 
+
 class ShelxlLine(object):
     def __init__(self, line, key=None):
         self.line = line
@@ -131,7 +130,7 @@ class ShelxlLine(object):
         return 'LINE: ' + self.line
 
     def write(self):
-        return self.line+'\n'
+        return self.line + '\n'
 
 
 class ShelxlAtom(object):
@@ -160,10 +159,11 @@ class ShelxlAtom(object):
 
     def write(self):
         return '{name:8} {sfac} {frac} {occ:6.3f} {adp}\n'.format(name=self.name,
-                                                                sfac=self.sfac,
-                                                                frac=' '.join(['{:6.4f}'.format(c) for c in self.frac]),
-                                                                occ=sum(self.occ),
-                                                                adp=' '.join(['{:6.4f}'.format(c) for c in self.adp]))
+                                                                  sfac=self.sfac,
+                                                                  frac=' '.join(
+                                                                      ['{:6.4f}'.format(c) for c in self.frac]),
+                                                                  occ=sum(self.occ),
+                                                                  adp=' '.join(['{:6.4f}'.format(c) for c in self.adp]))
 
 
 class ShelxlMolecule(object):
@@ -204,27 +204,32 @@ class ShelxlMolecule(object):
         return dd ** .5
 
     def asP1(self):
-        p1Atoms = {i+2: [] for i in range(len(self.symms))}
+        p1Atoms = {i + 2: [] for i in range(len(self.symms))}
         p1Mol = deepcopy(self)
         p1Mol.symms = []
         p1Mol.centric = False
         p1Mol.lattOps = []
+        specials = []
         for atom in self.atoms:
             # p1Mol.addAtom(atom)
             for i, symm in enumerate(self.symms):
-
+                resiKey = str(i + 2)
                 newFrac = (np.dot(atom.frac, symm.matrix) + symm.trans).flatten().tolist()[0]
                 vAtom = ShelxlAtom(atom.rawData, virtual=True)
                 vAtom.frac = newFrac
                 # vAtom.name += 'X{}'.format(i)
-                vAtom.occ = (10,1)
-                atom.occ = (10,1)
+                vAtom.occ = (10, 1)
+                atom.occ = (10, 1)
                 distance = self.distance(atom, vAtom)
+                specialName = atom.name + '_' + resiKey
                 if distance < 0.1:
                     print('Atom {} on special position. (SYMM {})'.format(atom.name, i))
+
+                    specials.append(specialName)
                 else:
-                    p1Atoms[i+2].append(vAtom)
+                    p1Atoms[i + 2].append(vAtom)
                     p1Mol.addAtom(vAtom)
+                    p1Mol.atomDict[specialName] = vAtom
 
         #         for key, eqiv in self.eqivs.items():
         #             if symm == eqiv:
@@ -232,7 +237,22 @@ class ShelxlMolecule(object):
         #                 print(symm)
         #                 print(eqiv)
         #                 print()
-        # exit()
+        #         print()
+
+                for k, dfix in enumerate(p1Mol.dfixs):
+                    pairs = set(dfix[2])
+                    # print(dfix)
+                    newpairs = set()
+                    for pair in pairs:
+                        if atom.name in pair:
+                            # print(atom.name, pair)
+                            newPair = (pair[0]+'_'+resiKey, pair[1]+'_'+resiKey)
+                            if newPair[0] in specials or newPair[1] in specials:
+                                continue
+                            newpairs.add(newPair)
+                    p1Mol.dfixs[k] = (dfix[0], dfix[1], list(pairs.union(newpairs)))
+        p1Mol._finalizeDfix()
+
         p1AtomList = []
         for key, values in p1Atoms.items():
             p1AtomList.append(ShelxlLine('RESI sym {}'.format(key)))
@@ -301,13 +321,12 @@ class ShelxlMolecule(object):
 
     def getVirtualAtom(self, atomName):
         base, equiv = atomName.split('_$')
-        symm = self.eqivs['$'+equiv]
+        symm = self.eqivs['$' + equiv]
         atom = self.getAtom(base)
         newFrac = (np.dot(atom.frac, symm.matrix) + symm.trans).flatten().tolist()[0]
         vAtom = ShelxlAtom(atom.rawData, virtual=True)
         vAtom.frac = newFrac
         return vAtom
-
 
     def finalize(self):
         self.atomDict = {}
@@ -315,7 +334,6 @@ class ShelxlMolecule(object):
             self.atomDict[atom.name] = atom
         self._finalizeDfix()
         # self.checkDfix()
-
 
     def checkDfix(self):
         vSum = 0
@@ -325,17 +343,19 @@ class ShelxlMolecule(object):
         for atom1, dfixs in self.dfixTable.items():
             for atom2, data in dfixs.items():
                 target, err = data
-                d = self.distance(self.getAtom(atom1), self.getAtom(atom2))
-                diff = abs(d-target)**2
+                try:
+                    d = self.distance(self.getAtom(atom1), self.getAtom(atom2))
+                except KeyError:
+                    continue
+                diff = abs(d - target) ** 2
                 vSum += diff * err
                 wSum += err
                 sum += diff
                 i += 1
 
-        return (sum/i)**.5, (vSum/wSum)**.5
+        return (sum / i) ** .5, (vSum / wSum) ** .5
         # print('         Mean squared difference: {:6.4f}'.format((sum/i)**.5))
         # print('Weighted mean squared difference: {:6.4f}'.format((vSum/wSum)**.5))
-
 
     def _finalizeDfix(self):
         dfixTable = {atom.name.upper(): {} for atom in self.atoms}
@@ -372,6 +392,7 @@ class ShelxlMolecule(object):
                 #     tableField2.append((target, err))
         self.dfixTable = dfixTable
 
+
 class ShelxlReader(object):
     CURRENTMOLECULE = None
     CURRENTINSTANCE = None
@@ -397,9 +418,9 @@ class ShelxlReader(object):
         #     print(line)
 
         # for atom1 in self.CURRENTMOLECULE.atoms:
-            # for atom2 in self.CURRENTMOLECULE.atoms:
-            #     print(self.CURRENTMOLECULE.distance( atom1, atom2))
-            # print(atom1.name)
+        # for atom2 in self.CURRENTMOLECULE.atoms:
+        #     print(self.CURRENTMOLECULE.distance( atom1, atom2))
+        # print(atom1.name)
         molecule = ShelxlReader.CURRENTMOLECULE
         molecule.finalize()
         ShelxlReader.CURRENTMOLECULE = None
@@ -416,26 +437,52 @@ class ShelxlReader(object):
                 except KeyError:
                     fp.write(line.write())
                 else:
-                    fp.write(data+'\n')
+                    fp.write(data + '\n')
 
     def toP1(self):
         self.molecule, newAtoms = self.molecule.asP1()
+        replacedDfix = False
+        offset = 0
         for i, line in enumerate(self.lines):
             if line.key is 'latt':
-               self.lines[i] = ShelxlLine('LATT -1')
+                self.lines[i] = ShelxlLine('LATT -1')
             if line.key is 'symm':
                 self.lines[i] = ShelxlLine('')
             if line.key is 'hklf':
-                self.lines = self.lines[:i] + newAtoms + self.lines[i:]
+                self.lines = self.lines[:i+offset] + newAtoms + self.lines[i+offset:]
+            if line.key is 'dfix':
+                # self.lines[i] = ShelxlLine('')
+                # print(line)
+                if replacedDfix:
+
+                    continue
+                replacedDfix = True
+                # print(len(self.molecule.dfixTable))
+                dfixLines = []
+                for value, err, allPairs in self.molecule.dfixs:
+                    for l in range(len(allPairs)//4):
+                        l = 4*l
+                        pairs = allPairs[l:l+4]
+                        line = 'DFIX {value} {err} {pairs}'.format(value=value, err=err if err else '',
+                                                                   pairs=' '.join(['{} {}'.format(pair[0], pair[1]) for pair in pairs]))
+                        dfixLines.append(ShelxlLine(line))
+                        # print(line)
+                before = len(self.lines)
+                self.lines = self.lines[:i] + dfixLines + self.lines[i:]
+                after = len(self.lines)
+                offset = after-before
+
         # for line in self.lines:
         #     print(line.write())
         # self.write('p1.ins')
+        # exit()
 
     def __getitem__(self, item):
         return self._shelxlDict[item]
 
     def __setitem__(self, key, value):
         self._shelxlDict[key] = value
+
 
 class BaseParser(object):
     RETURNTYPE = None
@@ -608,7 +655,7 @@ class SfacParser(BaseParser):
 
     def __call__(self, line):
 
-        self.body = self.body+'=\n'+line
+        self.body = self.body + '=\n' + line
         return LineParser(), ShelxlLine(self.body)
 
     def finished(self):
@@ -663,6 +710,7 @@ class SymmParser(BaseParser):
 
 class DfixParser(BaseParser):
     RETURNTYPE = ShelxlLine
+    KEY = 'dfix'
 
     def finished(self):
         data = [word for word in self.body[4:].split() if word]
@@ -674,8 +722,8 @@ class DfixParser(BaseParser):
         else:
             data = data[1:]
         pairs = []
-        for i in range(len(data)//2):
-            i, j = 2*i, 2*i+1
+        for i in range(len(data) // 2):
+            i, j = 2 * i, 2 * i + 1
             pairs.append((data[i], data[j]))
             ShelxlReader.CURRENTMOLECULE.addDfix(value, err, pairs)
 
