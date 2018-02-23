@@ -62,9 +62,6 @@ def run(fileName, p1=False, overrideClass=None):
     copyfile(join(fileDir, fileName + '.hkl'), './work.hkl')
     reader = ShelxlReader()
     molecule = reader.read(resFileName)
-    # reader.toP1()
-    # exit()
-    # print(molecule.checkDfix())
     cell = reader['cell'].split()
     cls, params = determineCrystalClass(cell)
     if overrideClass:
@@ -76,8 +73,6 @@ def run(fileName, p1=False, overrideClass=None):
         reader.toP1()
         cls = 'triclinic'
         params = CLASSPARAMETERS[cls]
-    # print(params, cell)
-    # exit()
     originalCell = [float(x) for x in cell[2:]]
 
     delta = .5
@@ -88,19 +83,9 @@ def run(fileName, p1=False, overrideClass=None):
 
     i = -1
     while True:
-        # print('Step', i + 1)
         i += 1
         data = [float(x) for x in cell[2:]]
-        # a, b, c = [float(x) for x in cell[2:5]]
-        # params = (a, b, c)
         jobs = [data]
-        # for j, p in enumerate(params):
-        #     job1 = list(params)
-        #     job1[j] = job1[j] - delta
-        #     jobs.append(job1)
-        #     job2 = list(params)
-        #     job2[j] = job2[j] + delta
-        #     jobs.append(job2)
         conDict = params[1]
         for p in params[0]:
             try:
@@ -118,8 +103,6 @@ def run(fileName, p1=False, overrideClass=None):
             for con in cons:
                 j[con] = j[p]
             jobs.append(j)
-        # print(jobs)
-        # exit()
 
         bestR = 999999
         bestRj = None
@@ -135,20 +118,14 @@ def run(fileName, p1=False, overrideClass=None):
         barLengths = 60
         for j, job in enumerate(jobs):
             progress = (j + 1) / numJobs
-            # sys.stdout.write('\r substep: {}/{}'.format(j + 1, len(jobs)))
-            # sys.stdout.write('\r {}'.format(progress))
             progress = int(barLengths * progress)
             sys.stdout.write('\r Step {:3} ['.format(i + 1) + progress * '#' + (barLengths - progress) * '-' + ']')
             sys.stdout.flush()
             newCell = cell[:2] + ['{:7.4f}'.format(p) for p in job]  # + cell[5:]
-            # print(newCell)
-            # exit()
             newCell = ' '.join(newCell) + '\n'
-            # print(newCell)
             reader['cell'] = newCell
             reader.write(fileName='work.ins')
             wR2, mean, weighted = evaluate('work')
-            # print(weighted)
             if wR2 < bestR:
                 bestR = wR2
                 bestRj = j
@@ -173,7 +150,7 @@ def run(fileName, p1=False, overrideClass=None):
         print('   New Cell:  ', cell2String(jobs[bestWj], offset=15))
         print()
         print('   DFIX Fit:     {:7.5f} / {:7.5f}\n'.format(bestW, startDiff))
-        print('   Current wR2:  {:7.5f}\n'.format(bestRW))
+        print('   Current wR2:  {}'.format('{:7.5f}\n'.format(bestRW) if bestRW < 10 else 'No imvprovements'))
         # input()
         cell = cell[:2] + ['{:7.4f}'.format(p) for p in jobs[bestWj]]  # + cell[5:]
         lastDiff = bestW
@@ -188,7 +165,7 @@ def run(fileName, p1=False, overrideClass=None):
                 break
         else:
             lastImprovement = i
-        # print(reader['cell'])
+        break
     print('\n\nOriginal Cell:', cell2String(originalCell, offset=15))
     print('   Final Cell:', cell2String(cell[2:], offset=15))
 
@@ -203,13 +180,11 @@ JDICT = {0: 'a',
          5: 'gamma'}
 
 def j2Name(j):
-    # print(j)
     if not j:
         return 'No modifications.'
     j -= 1
     j = j//2
     name = ('Incremented ' if j%2 else 'Decremented ') + JDICT[j]
-    # print(name)
     return name
 
 
@@ -242,7 +217,7 @@ if __name__ == '__main__':
                         help='Expand structure to P1 before refinement. --class argument will be ignored.')
     args = parser.parse_args()
     expand = args.expand
-    # expand = True
+    expand = True
     crystalClass = args.__dict__['class']
     fileName = args.fileName[0]
     # print(fileName)

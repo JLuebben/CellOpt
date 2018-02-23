@@ -134,13 +134,19 @@ class ShelxlLine(object):
 
 
 class ShelxlAtom(object):
-    def __init__(self, line, virtual=False, key=None):
+    def __init__(self, line, virtual=False, key=None, resi=('', 0)):
         self.rawData = line
         self.key = key
         data = [word for word in line.split() if word]
         data = [float(word) if i else word for i, word in enumerate(data)]
         self.data = data
-        self.name = data[0]
+        self.resiClass = resi[0]
+        # print(resi)
+        if resi[1]:
+            self.name = data[0]+'_{}'.format(resi[1])
+            # print(self.name)
+        else:
+            self.name = data[0]
         self.sfac = int(data[1])
         self.frac = np.array(data[2:5])
         self.occ = (data[5] // 1, data[5] % 1)
@@ -252,7 +258,6 @@ class ShelxlMolecule(object):
                             newpairs.add(newPair)
                     p1Mol.dfixs[k] = (dfix[0], dfix[1], list(pairs.union(newpairs)))
         p1Mol._finalizeDfix()
-
         p1AtomList = []
         for key, values in p1Atoms.items():
             p1AtomList.append(ShelxlLine('RESI sym {}'.format(key)))
@@ -345,8 +350,8 @@ class ShelxlMolecule(object):
                 target, err = data
                 try:
                     d = self.distance(self.getAtom(atom1), self.getAtom(atom2))
-                except KeyError:
-                    continue
+                except ValueError:
+                    print(atom1, atom2)
                 diff = abs(d - target) ** 2
                 vSum += diff * err
                 wSum += err
@@ -398,6 +403,7 @@ class ShelxlReader(object):
     CURRENTINSTANCE = None
 
     def __init__(self):
+        self.currentResi = ('', 0)
         self.lines = []
         self.atoms = []
         self._shelxlDict = {}
@@ -476,6 +482,9 @@ class ShelxlReader(object):
         #     print(line.write())
         # self.write('p1.ins')
         # exit()
+
+    def setCurrentResi(self, cls, num):
+        self.currentResi = (cls, num)
 
     def __getitem__(self, item):
         return self._shelxlDict[item]
@@ -576,7 +585,7 @@ class LineParser(BaseParser):
                          'OMIT': self.doNothing,
                          'PLAN': self.doNothing,
                          'PRIG': self.doNothing,
-                         'RESI': self.doNothing,
+                         'RESI': ResiParser,
                          'RTAB': self.doNothing,
                          'SADI': self.doNothing,
                          'SAME': self.doNothing,
@@ -625,8 +634,16 @@ class LineParser(BaseParser):
 class AtomParser(BaseParser):
     RETURNTYPE = ShelxlAtom
 
+    def get(self, previousParser):
+        if not self.body.endswith('='):
+            self.finished()
+            return previousParser, self.RETURNTYPE(self.body, key=self.KEY, resi=ShelxlReader.CURRENTINSTANCE.currentResi)
+        else:
+            self.body = self.body[:-1]
+            return self, None
+
     def __call__(self, line):
-        return LineParser(), ShelxlAtom(self.body + line)
+        return LineParser(), ShelxlAtom(self.body + line, resi=ShelxlReader.CURRENTINSTANCE.currentResi)
 
 
 class CellParser(BaseParser):
@@ -742,6 +759,16 @@ class EqivParser(BaseParser):
 class HklfParser(BaseParser):
     RETURNTYPE = ShelxlLine
     KEY = 'hklf'
+
+
+class ResiParser(BaseParser):
+    RETURNTYPE = ShelxlLine
+    KEY = 'resi'
+
+    def finished(self):
+        data = [word for word in self.body[4:].split() if word]
+        cls, num = data[0], data[1]
+        ShelxlReader.CURRENTINSTANCE.setCurrentResi(cls, num)
 
 
 class Reader(object):
