@@ -38,6 +38,11 @@ def evaluate(fileName):
     return wR2, mean, weighted
 
 
+def quickEvaluate(molecule, cell):
+    molecule.cell = cell
+    return molecule.checkDfix()
+
+
 def determineCrystalClass(cell):
     a, b, c, A, B, C = cell[2:]
     cls = 'triclinic'
@@ -56,7 +61,127 @@ def determineCrystalClass(cell):
     return cls, CLASSPARAMETERS[cls]
 
 
-def run(fileName, p1=False, overrideClass=None):
+def generateJobs(params, cell, delta):
+    data = [float(x) for x in cell[2:]]
+    jobs = [data]
+    conDict = params[1]
+    for p in params[0]:
+        try:
+            cons = conDict[p]
+        except:
+            cons = []
+        j = data[:]
+        j[p] -= delta
+        for con in cons:
+            j[con] = j[p]
+        jobs.append(j)
+
+        j = data[:]
+        j[p] += delta
+        for con in cons:
+            j[con] = j[p]
+        jobs.append(j)
+    return jobs
+
+
+def run(fileName, p1=False, overrideClass=None, fast=False):
+    resFileName = fileName + '.res'
+    fileDir = dirname(resFileName)
+    copyfile(join(fileDir, fileName + '.hkl'), './work.hkl')
+    reader = ShelxlReader()
+    molecule = reader.read(resFileName)
+    cell = reader['cell'].split()
+    cls, params = determineCrystalClass(cell)
+    if overrideClass:
+        cls = overrideClass
+        params = CLASSPARAMETERS[cls]
+    print('Crystal Class is {}.'.format(cls))
+    if p1:
+        print('Expanding to P1.')
+        reader.toP1()
+        cls = 'triclinic'
+        params = CLASSPARAMETERS[cls]
+    originalCell = [float(x) for x in cell[2:]]
+    startDiff, _ = molecule.checkDfix()
+    lastDiff = 9999
+
+    i = -1
+    barLengths = 30
+
+    print('  ' + (barLengths - 8) // 2 * '-' + 'Progress' + (
+                barLengths - 8) // 2 * '-' + '  ---Fit--   ---a---   ---b---   ---c---   -alpha-   --beta-   -gamma-')
+    progress = (i + 1) / 10
+    progress = int(barLengths * progress)
+    sys.stdout.write(
+        '\r [' + progress * '#' + (barLengths - progress) * '-' + ']')
+    sys.stdout.flush()
+    for i in range(10):
+        i += 1
+        sdelta = .1
+        slastImprovement = 0
+        for ii in range(250):
+            sbestW = lastDiff
+            sbestWj = 0
+            jobs = generateJobs(params, cell, sdelta)
+            for j, job in enumerate(jobs):
+                weighted, mean = quickEvaluate(molecule, job)
+                if weighted < sbestW:
+                    sbestW = weighted
+                    sbestWj = j
+            cell = cell[:2] + ['{:7.4f}'.format(p) for p in jobs[sbestWj]]
+            if sbestWj == 0:
+                # print('No improvements found. Decreasing step size.')
+                sdelta = sdelta / 2
+                if sdelta < 0.002:
+                    # print('Converged.')
+                    break
+                if ii - slastImprovement > 10:
+                    # print('No improvements since 10 steps. Terminating.')
+                    break
+            else:
+                slastImprovement = ii
+        if not fast:
+            newCell = ' '.join(cell) + '\n'
+            reader['cell'] = newCell
+            reader.write(fileName='work.ins')
+            wR2, mean, weighted = evaluate('work')
+            newReader = ShelxlReader()
+            molecule = newReader.read('work.res')
+            progress = (i + 1) / 10
+            progress = int(barLengths * progress)
+            sys.stdout.write(
+                '\r [' + progress * '#' + (barLengths - progress) * '-' + '] {fit:8.6f} {cell}'.format(fit=weighted,
+                                                                                                       cell=' '.join([
+                                                                                                           '{:9.4f}'.format(
+                                                                                                               p)
+                                                                                                           for
+                                                                                                           p
+                                                                                                           in
+                                                                                                           job])))
+            sys.stdout.flush()
+        else:
+            progress = barLengths
+            sys.stdout.write(
+                '\r [' + progress * '#' + (barLengths - progress) * '-' + '] {fit:8.6f} {cell}'.format(fit=weighted,
+                                                                                                       cell=' '.join([
+                                                                                                           '{:9.4f}'.format(
+                                                                                                               p)
+                                                                                                           for
+                                                                                                           p
+                                                                                                           in
+                                                                                                           job])))
+            sys.stdout.flush()
+            break
+    print()
+    print('\n\nOriginal Cell:', cell2String(originalCell, offset=15))
+    print()
+    print('   Final Cell:', cell2String(cell[2:], offset=15))
+
+    print('\nOriginal DFIX fit: {:8.6f}'.format(startDiff))
+    print('   Final DFIX fit: {:8.6f}'.format(weighted))
+
+
+def run2(fileName, p1=False, overrideClass=None):
     resFileName = fileName + '.res'
     fileDir = dirname(resFileName)
     copyfile(join(fileDir, fileName + '.hkl'), './work.hkl')
@@ -172,6 +297,7 @@ def run(fileName, p1=False, overrideClass=None):
     print('\nOriginal DFIX fit: {:8.6f}'.format(startDiff))
     print('   Final DFIX fit: {:8.6f}'.format(bestW))
 
+
 JDICT = {0: 'a',
          1: 'b',
          2: 'c',
@@ -179,12 +305,13 @@ JDICT = {0: 'a',
          4: 'beta',
          5: 'gamma'}
 
+
 def j2Name(j):
     if not j:
         return 'No modifications.'
     j -= 1
-    j = j//2
-    name = ('Incremented ' if j%2 else 'Decremented ') + JDICT[j]
+    j = j // 2
+    name = ('Incremented ' if j % 2 else 'Decremented ') + JDICT[j]
     return name
 
 
@@ -213,13 +340,28 @@ if __name__ == '__main__':
                                  'rhombohedral',
                                  'hexagonal',
                                  'cubic'])
-    parser.add_argument('--expand', action='store_true',
+    parser.add_argument('--expand', '-x', '-e', action='store_true',
                         help='Expand structure to P1 before refinement. --class argument will be ignored.')
+    parser.add_argument('--mode', '-m', type=str, default='default', nargs=1,
+                        help="Specify optimization scheme. The {fast} scheme uses a simplex algorithm to optimize cell "
+                             "parameters against DFIX restraints. The {default} scheme runs a SHELXL optimization step "
+                             "after each time the simplex optimization converged and restarts the simplex (requires "
+                             "SHELXL). The {accurate} scheme runs SHELXL as part of the simplex's evaluation step "
+                             "(very slow, and requires SHELXL)",
+                        choices=['default', 'fast', 'accurate'])
     args = parser.parse_args()
     expand = args.expand
-    expand = True
+    # expand = True
     crystalClass = args.__dict__['class']
     fileName = args.fileName[0]
     # print(fileName)
     # crystalClass = 'monoclinic'
-    run(fileName, p1=expand, overrideClass=crystalClass)
+    mode = args.mode
+    # mode = 'fast'
+    # mode = 'accurate'
+    if mode is 'default':
+        run(fileName, p1=expand, overrideClass=crystalClass)
+    elif mode is 'fast':
+        run(fileName, p1=expand, overrideClass=crystalClass, fast=True)
+    elif mode is 'accurate':
+        run2(fileName, p1=expand)

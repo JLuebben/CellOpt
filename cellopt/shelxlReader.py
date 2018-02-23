@@ -229,7 +229,7 @@ class ShelxlMolecule(object):
                 distance = self.distance(atom, vAtom)
                 specialName = atom.name + '_' + resiKey
                 if distance < 0.1:
-                    print('Atom {} on special position. (SYMM {})'.format(atom.name, i))
+                    # print('Atom {} on special position. (SYMM {})'.format(atom.name, i))
 
                     specials.append(specialName)
                 else:
