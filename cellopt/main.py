@@ -5,6 +5,12 @@ import os
 import sys
 import argparse
 from os.path import dirname, join
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    PLOTAVAILABLE = False
+else:
+    PLOTAVAILABLE = True
 
 CLASSPARAMETERS = {'triclinic': ((0, 1, 2, 3, 4, 5), {}),
                    'monoclinic': ((0, 1, 2, 4), {}),
@@ -84,38 +90,48 @@ def generateJobs(params, cell, delta):
     return jobs
 
 
-def run(fileName, p1=False, overrideClass=None, fast=False):
+def run(fileName, p1=False, overrideClass=None, fast=False, plot=False):
+    plotter = Plotter()
     resFileName = fileName + '.res'
     fileDir = dirname(resFileName)
     copyfile(join(fileDir, fileName + '.hkl'), './work.hkl')
     reader = ShelxlReader()
     molecule = reader.read(resFileName)
     cell = reader['cell'].split()
+
     cls, params = determineCrystalClass(cell)
     if overrideClass:
         cls = overrideClass
         params = CLASSPARAMETERS[cls]
     print('Crystal Class is {}.'.format(cls))
     if p1:
-        print('Expanding to P1.')
+        if '-' in reader['latt']:
+            print('Expanding to P1.')
+        else:
+            print('Expanding to P-1.')
         reader.toP1()
         cls = 'triclinic'
         params = CLASSPARAMETERS[cls]
     originalCell = [float(x) for x in cell[2:]]
     startDiff, _ = molecule.checkDfix()
+    startDiff0 =startDiff
     lastDiff = 9999
+
+    iterations = 25
 
     i = -1
     barLengths = 30
 
     print('  ' + (barLengths - 8) // 2 * '-' + 'Progress' + (
                 barLengths - 8) // 2 * '-' + '  ---Fit--   ---a---   ---b---   ---c---   -alpha-   --beta-   -gamma-')
-    progress = (i + 1) / 10
+    progress = (i + 1) / iterations
     progress = int(barLengths * progress)
     sys.stdout.write(
         '\r [' + progress * '#' + (barLengths - progress) * '-' + ']')
     sys.stdout.flush()
-    for i in range(10):
+    for i in range(iterations):
+        plotter(a=float(cell[2]), b=float(cell[3]), c=float(cell[4]), alpha=float(cell[5]), beta=float(cell[6]),
+                gamma=float(cell[7]), fit=startDiff*100)
         i += 1
         sdelta = .1
         slastImprovement = 0
@@ -128,6 +144,21 @@ def run(fileName, p1=False, overrideClass=None, fast=False):
                 if weighted < sbestW:
                     sbestW = weighted
                     sbestWj = j
+                    plotter(a=float(job[0]), b=float(job[1]), c=float(job[2]), alpha=float(job[3]), beta=float(job[4]),
+                        gamma=float(job[5]), fit=sbestW*100)
+                    progress = (i) / iterations
+                    progress = int(barLengths * progress)
+                    sys.stdout.write(
+                        '\r [' + progress * '#' + (barLengths - progress) * '-' + '] {fit:8.6f} {cell}'.format(
+                            fit=weighted,
+                            cell=' '.join([
+                                '{:9.4f}'.format(
+                                    p)
+                                for
+                                p
+                                in
+                                job])))
+                    sys.stdout.flush()
             cell = cell[:2] + ['{:7.4f}'.format(p) for p in jobs[sbestWj]]
             if sbestWj == 0:
                 # print('No improvements found. Decreasing step size.')
@@ -147,7 +178,7 @@ def run(fileName, p1=False, overrideClass=None, fast=False):
             wR2, mean, weighted = evaluate('work')
             newReader = ShelxlReader()
             molecule = newReader.read('work.res')
-            progress = (i + 1) / 10
+            progress = (i) / iterations
             progress = int(barLengths * progress)
             sys.stdout.write(
                 '\r [' + progress * '#' + (barLengths - progress) * '-' + '] {fit:8.6f} {cell}'.format(fit=weighted,
@@ -172,13 +203,16 @@ def run(fileName, p1=False, overrideClass=None, fast=False):
                                                                                                            job])))
             sys.stdout.flush()
             break
+        startDiff = sbestW
     print()
     print('\n\nOriginal Cell:', cell2String(originalCell, offset=15))
     print()
     print('   Final Cell:', cell2String(cell[2:], offset=15))
 
-    print('\nOriginal DFIX fit: {:8.6f}'.format(startDiff))
+    print('\nOriginal DFIX fit: {:8.6f}'.format(startDiff0))
     print('   Final DFIX fit: {:8.6f}'.format(weighted))
+    if plot:
+        plotter.show()
 
 
 def run2(fileName, p1=False, overrideClass=None):
@@ -326,10 +360,44 @@ def cell2String(cell, offset=0):
                                                                                             offset=' ' * offset)
 
 
+
+class Plotter(object):
+    def __init__(self):
+
+        self.values = {}
+
+    def __call__(self, **kwargs):
+        for key, value in kwargs.items():
+            try:
+                self.values[key].append(value)
+            except KeyError:
+                self.values[key] = [value]
+
+    def normalize(self):
+        for key, values in self.values.items():
+            # m = max(values)
+            m = values[0]
+            # self.values[key] = [v/m for v in values]
+            self.values[key] = [v-m for v in values]
+
+
+    def plot(self, x, y, fileName='', label=''):
+        plt.plot(x, y, marker='', label=label)
+        plt.legend(loc='upper right')
+        return plt
+
+    def show(self):
+        self.normalize()
+        plt = None
+        for key, data in self.values.items():
+            plt = self.plot(range(len(data)), data, label=key)
+        plt.show()
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Refine cell parameters against distance restraints.')
-    parser.add_argument('fileName', type=str, nargs=1, help='Name of a shelxl result file.')
-    parser.add_argument('-c', '--class', type=str, default=None, nargs=1,
+    parser.add_argument('fileName', type=str, help='Name of a shelxl result file.')
+    parser.add_argument('-c', '--class', type=str, default=None,
                         help='Crystal class constraints for refinement.\nWARNING: The crystal class is ONLY used to'
                              'constrain the cell parameter refinement, and is NOT used to modify the structure'
                              'accordingly. Use this option with care.',
@@ -341,27 +409,33 @@ if __name__ == '__main__':
                                  'hexagonal',
                                  'cubic'])
     parser.add_argument('--expand', '-x', '-e', action='store_true',
-                        help='Expand structure to P1 before refinement. --class argument will be ignored.')
+                        help='Expand structure to P1 (P-1 for centric structures) before refinement. Note that a'
+                             'potential center of invasion is not expanded to ensure the stability of intermediate'
+                             'refinement steps. --class argument will be ignored.')
     parser.add_argument('--mode', '-m', type=str, default='default', nargs=1,
                         help="Specify optimization scheme. The {fast} scheme uses a simplex algorithm to optimize cell "
                              "parameters against DFIX restraints. The {default} scheme runs a SHELXL optimization step "
                              "after each time the simplex optimization converged and restarts the simplex (requires "
                              "SHELXL). The {accurate} scheme runs SHELXL as part of the simplex's evaluation step "
-                             "(very slow, and requires SHELXL)",
+                             "(very slow, requires SHELXL)",
                         choices=['default', 'fast', 'accurate'])
+    parser.add_argument('--plot', '-p', action='store_true',
+                        help='Create diagnostic plot.')
     args = parser.parse_args()
     expand = args.expand
     # expand = True
     crystalClass = args.__dict__['class']
-    fileName = args.fileName[0]
+    # crystalClass = 'orthorhombic'
+    fileName = args.fileName
     # print(fileName)
     # crystalClass = 'monoclinic'
     mode = args.mode
     # mode = 'fast'
     # mode = 'accurate'
+    plot = args.plot
     if mode is 'default':
-        run(fileName, p1=expand, overrideClass=crystalClass)
+        run(fileName, p1=expand, overrideClass=crystalClass, plot=plot)
     elif mode is 'fast':
-        run(fileName, p1=expand, overrideClass=crystalClass, fast=True)
+        run(fileName, p1=expand, overrideClass=crystalClass, fast=True, plot=plot)
     elif mode is 'accurate':
         run2(fileName, p1=expand)

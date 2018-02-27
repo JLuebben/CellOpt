@@ -12,6 +12,7 @@ class SymmetryElement(object):
         """
         Constructor.
         """
+        self.centric = centric
         self.symms = symms
         self.ID = SymmetryElement.symm_ID
         SymmetryElement.symm_ID += 1
@@ -62,6 +63,7 @@ class SymmetryElement(object):
         newSymm.trans = [(self.trans[0] + lattSymm.trans[0]) / 1,
                          (self.trans[1] + lattSymm.trans[1]) / 1,
                          (self.trans[2] + lattSymm.trans[2]) / 1]
+        newSymm.centric = self.centric
         return newSymm
 
     def toShelxl(self):
@@ -210,15 +212,17 @@ class ShelxlMolecule(object):
         return dd ** .5
 
     def asP1(self):
-        p1Atoms = {i + 2: [] for i in range(len(self.symms))}
+        symms = [symm for symm in self.symms if not symm.centric]
+        p1Atoms = {i + 2: [] for i in range(len(symms))}
         p1Mol = deepcopy(self)
         p1Mol.symms = []
         p1Mol.centric = False
         p1Mol.lattOps = []
         specials = []
+
         for atom in self.atoms:
             # p1Mol.addAtom(atom)
-            for i, symm in enumerate(self.symms):
+            for i, symm in enumerate(symms):
                 resiKey = str(i + 2)
                 newFrac = (np.dot(atom.frac, symm.matrix) + symm.trans).flatten().tolist()[0]
                 vAtom = ShelxlAtom(atom.rawData, virtual=True)
@@ -308,6 +312,7 @@ class ShelxlMolecule(object):
     def setCentric(self, value):
         self.centric = value
         self.symms.append(SymmetryElement(['-X', '-Y', '-Z']))
+        self.symms[-1].centric=True
 
     def setLattOps(self, lattOps):
         self.lattOps = lattOps
@@ -451,7 +456,10 @@ class ShelxlReader(object):
         offset = 0
         for i, line in enumerate(self.lines):
             if line.key is 'latt':
-                self.lines[i] = ShelxlLine('LATT -1')
+                if '-' in line.line:
+                    self.lines[i] = ShelxlLine('LATT -1')
+                else:
+                    self.lines[i] = ShelxlLine('LATT 1')
             if line.key is 'symm':
                 self.lines[i] = ShelxlLine('')
             if line.key is 'hklf':
@@ -477,7 +485,6 @@ class ShelxlReader(object):
                 self.lines = self.lines[:i] + dfixLines + self.lines[i:]
                 after = len(self.lines)
                 offset = after-before
-
         # for line in self.lines:
         #     print(line.write())
         # self.write('p1.ins')
@@ -714,6 +721,7 @@ class LattParser(BaseParser):
             ShelxlReader.CURRENTMOLECULE.setCentric(True)
         lattOps = LattParser.LATTDICT[abs(latt)]
         ShelxlReader.CURRENTMOLECULE.setLattOps(lattOps)
+        ShelxlReader.CURRENTINSTANCE['latt'] = self.body
 
 
 class SymmParser(BaseParser):
