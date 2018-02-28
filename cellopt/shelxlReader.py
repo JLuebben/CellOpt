@@ -46,6 +46,12 @@ class SymmetryElement(object):
         return string
 
     def __eq__(self, other):
+        """
+        Check two SymmetryElement instances for equivalence.
+        Note that differences in lattice translation are ignored.
+        :param other: SymmetryElement instance
+        :return: True/False
+        """
         m = (self.matrix == other.matrix).all()
         t1 = np.array([v % 1 for v in self.trans])
         t2 = np.array([v % 1 for v in other.trans])
@@ -123,6 +129,9 @@ class SymmetryElement(object):
 
 
 class ShelxlLine(object):
+    """
+    Class representing a line in a Shelxl.res file.
+    """
     def __init__(self, line, key=None):
         self.line = line
         self.key = key
@@ -132,10 +141,17 @@ class ShelxlLine(object):
         return 'LINE: ' + self.line
 
     def write(self):
+        """
+        Returns a string representation of a shelxl line as expected by SHELXL.
+        :return: str
+        """
         return self.line + '\n'
 
 
-class ShelxlAtom(object):
+class ShelxlAtom(ShelxlLine):
+    """
+    Class Representing an Atom in a Shelxl.res file.
+    """
     def __init__(self, line, virtual=False, key=None, resi=('', 0)):
         self.rawData = line
         self.key = key
@@ -166,6 +182,10 @@ class ShelxlAtom(object):
         return 'ATOM: {} {} {} {} {}'.format(self.name, self.sfac, self.frac, self.occ, self.adp)
 
     def write(self):
+        """
+        Returns a string representation of a shelxl atom as expected by SHELXL.
+        :return: str
+        """
         return '{name:8} {sfac} {frac} {occ:6.3f} {adp}\n'.format(name=self.name,
                                                                   sfac=self.sfac,
                                                                   frac=' '.join(
@@ -175,6 +195,12 @@ class ShelxlAtom(object):
 
 
 class ShelxlMolecule(object):
+    """
+    Class representing a molecule-like object defined by the instructions given in a Shelxl.res file.
+    Note that a class instance does not necessarily represent a chemical molecule. Applying symmetry operations might
+    be necessary to create the whole chemical molecule, or mutiple chemical molecules can be represented by one
+    class instance in cases with multiple molecules per asymmetric unit.
+    """
     def __init__(self):
         self.sfacs = []
         self.customSfacData = {}
@@ -197,6 +223,13 @@ class ShelxlMolecule(object):
             yield atom
 
     def distance(self, atom1, atom2):
+        """
+        Compute the distance between two atoms with given names.
+        Tanslational symmetry is ignored. The shortest distance between the given atoms is computed.
+        :param atom1: str
+        :param atom2: str
+        :return: float
+        """
         x, y, z = atom1.frac
         try:
             xx, yy, zz = atom2.frac + 99.5
@@ -213,8 +246,16 @@ class ShelxlMolecule(object):
             alpha) * dy * dz + 2 * a * c * np.cos(beta) * dx * dz + 2 * a * b * np.cos(gamma) * dx * dy
         return dd ** .5
 
-    def asP1(self):
-        symms = [symm for symm in self.symms if not symm.centric]
+    def asP1(self, full=False):
+        """
+        Generates and returns a new ShelxlMolecule instance where symmetry operations were applied to generate
+        symmetry equivalent atoms. The returned instance represents the equivalent structural model in P1/P-1.
+        :return: ShelxlMolecule
+        """
+        if not full:
+            symms = [symm for symm in self.symms if not symm.centric]
+        else:
+            symms = self.symms[:]
         p1Atoms = {i + 2: [] for i in range(len(symms))}
         p1Mol = deepcopy(self)
         p1Mol.symms = []
@@ -272,27 +313,68 @@ class ShelxlMolecule(object):
         return p1Mol, p1AtomList
 
     def addAtom(self, atom):
+        """
+        Add an atom.
+        :param atom: ShelxlAtom
+        :return: None
+        """
         self.atoms.append(atom)
 
     def addQPeak(self, qPeak):
+        """
+        Add a Q-Peak
+        :param qPeak: ShelxlLine
+        :return: None
+        """
         self.qPeaks.append(qPeak)
 
     def setCell(self, cell):
+        """
+        Set the cell of the structural model.
+        :param cell: list of six floats
+        :return: None
+        """
         self.cell = np.array([float(c) for c in cell])
 
     def setWavelength(self, w):
+        """
+        Set the wavelengths.
+        :param w: float
+        :return: None
+        """
         self.waveLength = float(w)
 
     def setZ(self, z):
+        """
+        Set Z.
+        :param z: int
+        :return: None
+        """
         self.z = int(z)
 
     def setCerr(self, cerr):
+        """
+        Set the error of the unit cell parameters.
+        :param cerr: list of six floats
+        :return: None
+        """
         self.cerr = np.array([float(c) for c in cerr])
 
     def addSfac(self, sfac):
+        """
+        Add a predefined SFAC.
+        :param sfac: str
+        :return: None
+        """
         self.sfacs.append(sfac)
 
     def addCustomSfac(self, data):
+        """
+        Add a custom SFAC
+        :param data: list of strings
+         eg.[ O,  0.237,  0.799,  0.649,  3.654,  0.800, 10.924,  0.261, 29.964,  0.035, 0.0, 0.0, 1.234, 0.660, 16.000]
+        :return: None
+        """
         symbol = data[0]
         data = [float(datum) for datum in data[1:]]
         data = [symbol] + data
@@ -300,6 +382,11 @@ class ShelxlMolecule(object):
         self.sfacs.append(symbol)
 
     def addSymm(self, symmData):
+        """
+        Add the content of a Shelxl SYMM command to generate the appropriate SymmetryElement instance.
+        :param symmData: list of strings. eg.['1/2+X', '1/2+Y', '1/2+Z']
+        :return: None
+        """
         newSymm = SymmetryElement(symmData)
         self.symms.append(newSymm)
         for symm in self.lattOps:
@@ -312,29 +399,61 @@ class ShelxlMolecule(object):
                 self.symms.append(lattSymm)
 
     def setCentric(self, value):
+        """
+        Defines the instance as representing a centrosymmetric structure. Generates the appropriate SymmetryElement
+        instances automatically if called before adding further SYMM commands via self.addSymm().
+        :param value: bool
+        :return: None
+        """
         self.centric = value
         self.symms.append(SymmetryElement(['-X', '-Y', '-Z']))
         self.symms[-1].centric=True
 
     def setLattOps(self, lattOps):
+        """
+        Adds lattice operations. If called before adding SYMM commands, the appropriate lattice operations are used
+        automatically to generate further SymmetryElements.
+        :param lattOps: list of SymmetryElement instances.
+        :return: None
+        """
         self.lattOps = lattOps
 
-    def addDfix(self, value, err, targets):
-        self.dfixs.append((value, err, targets))
-
-    def addDfix(self, value, err, targets):
-        self.dangs.append((value, err, targets))
+    def addDfix(self, value, err, atomPairs):
+        """
+        Adds a DFIX restraint to the model.
+        :param value: float
+        :param err: float or None
+        :param atomPairs: list of tuples of strings
+        :return: None
+        """
+        self.dfixs.append((value, err, atomPairs))
 
     def addEqiv(self, name, data):
+        """
+        Adds an EQIV instruction to the model.
+        :param name: str eg. '$1'
+        :param data: list of strings equivalent to self.addSymm(symmData).
+        :return: None
+        """
         symm = SymmetryElement(data)
         self.eqivs[name] = symm
 
     def getAtom(self, atomName):
+        """
+        Returns ShelxlAtom instance with the given name
+        :param atomName: string
+        :return: ShelxlAtom instance
+        """
         if '_$' in atomName:
             return self.getVirtualAtom(atomName)
         return self.atomDict[atomName]
 
     def getVirtualAtom(self, atomName):
+        """
+        Generates and returns a virtual atom -- an atom that is referenced with an EQIV instruction.
+        :param atomName: str eg. 'O1_$1'
+        :return: ShelxlAtom instance
+        """
         base, equiv = atomName.split('_$')
         symm = self.eqivs['$' + equiv]
         atom = self.getAtom(base)
@@ -344,6 +463,10 @@ class ShelxlMolecule(object):
         return vAtom
 
     def finalize(self):
+        """
+        Called after reading a shelxl.res file. Sets up atom table and restraint table.
+        :return: None
+        """
         self.atomDict = {}
         for atom in self.atoms:
             self.atomDict[atom.name] = atom
@@ -351,6 +474,11 @@ class ShelxlMolecule(object):
         # self.checkDfix()
 
     def checkDfix(self):
+        """
+        Compute and return the mean difference between restrained target values and actual distance as well as the
+        weighted difference.
+        :return: (float<mean>, float<weightedMean>)
+        """
         vSum = 0
         wSum = 0
         sum = 0
@@ -369,8 +497,6 @@ class ShelxlMolecule(object):
                 i += 1
 
         return (sum / i) ** .5, (vSum / wSum) ** .5
-        # print('         Mean squared difference: {:6.4f}'.format((sum/i)**.5))
-        # print('Weighted mean squared difference: {:6.4f}'.format((vSum/wSum)**.5))
 
     def _finalizeDfix(self):
         dfixTable = {atom.name.upper(): {} for atom in self.atoms}
@@ -429,6 +555,9 @@ class ShelxlMolecule(object):
 
 
 class ShelxlReader(object):
+    """
+    Interface to read and interact with shelxl.res files.
+    """
     CURRENTMOLECULE = None
     CURRENTINSTANCE = None
 
@@ -439,6 +568,11 @@ class ShelxlReader(object):
         self._shelxlDict = {}
 
     def read(self, fileName):
+        """
+        Reads and parses a shelxl.res file with the given name. Returns the resulting ShelxlMolecule instance.
+        :param fileName: str
+        :return: ShelxlMolecule instance
+        """
         ShelxlReader.CURRENTMOLECULE = ShelxlMolecule()
         ShelxlReader.CURRENTINSTANCE = self
         parser = LineParser()
@@ -465,6 +599,11 @@ class ShelxlReader(object):
         return molecule
 
     def write(self, fileName='out.res'):
+        """
+        Writes a shelxl.res file with the given filename representing the potentially modified structure.
+        :param fileName: str
+        :return: None
+        """
         with open(fileName, 'w') as fp:
             for line in self.lines:
                 key = line.key
@@ -475,13 +614,19 @@ class ShelxlReader(object):
                 else:
                     fp.write(data + '\n')
 
-    def toP1(self):
-        self.molecule, newAtoms = self.molecule.asP1()
+    def toP1(self, full=False):
+        """
+        Modifies the ShelxlReader instance to represent a structure expanded to P1/P-1. Centrosymmentric structures
+        are expanded to P-1 by default. Override this behavior by setting full to True.
+        :param full: bool
+        :return: None
+        """
+        self.molecule, newAtoms = self.molecule.asP1(full=full)
         replacedDfix = False
         offset = 0
         for i, line in enumerate(self.lines):
             if line.key is 'latt':
-                if '-' in line.line:
+                if '-' in line.line or full:
                     self.lines[i] = ShelxlLine('LATT -1')
                 else:
                     self.lines[i] = ShelxlLine('LATT 1')
@@ -516,16 +661,36 @@ class ShelxlReader(object):
         # exit()
 
     def setCurrentResi(self, cls, num):
+        """
+        Sets the current RESIDUE.
+        :param cls: str
+        :param num: int
+        :return: None
+        """
         self.currentResi = (cls, num)
 
     def __getitem__(self, item):
+        """
+        Returns a structural attribute of the given name.
+        :param item: str
+        :return: object
+        """
         return self._shelxlDict[item]
 
     def __setitem__(self, key, value):
+        """
+        Sets a structural attribute to a given value
+        :param key: str
+        :param value: object
+        :return: None
+        """
         self._shelxlDict[key] = value
 
 
 class BaseParser(object):
+    """
+    Base class for parsers.
+    """
     RETURNTYPE = None
     KEY = None
 
@@ -549,6 +714,10 @@ class BaseParser(object):
 
 
 class LineParser(BaseParser):
+    """
+    Default parser for lines in shelxl.res files.
+    The parser will identify if a more specialized parser is required, and creates one if necessary.
+    """
     def __init__(self):
         self.COMMANDS = {'REM': self.doNothing,
                          'BEDE': self.doNothing,
@@ -664,6 +833,9 @@ class LineParser(BaseParser):
 
 
 class AtomParser(BaseParser):
+    """
+    Parser of atom records in shelx.res files.
+    """
     RETURNTYPE = ShelxlAtom
 
     def get(self, previousParser):
@@ -679,6 +851,9 @@ class AtomParser(BaseParser):
 
 
 class CellParser(BaseParser):
+    """
+    Parser for CELL records in shelxl.res files.
+    """
     RETURNTYPE = ShelxlLine
     KEY = 'cell'
 
@@ -690,6 +865,9 @@ class CellParser(BaseParser):
 
 
 class CerrParser(BaseParser):
+    """
+    Parser for CERR records in shelxl.res files.
+    """
     RETURNTYPE = ShelxlLine
     KEY = 'cerr'
 
