@@ -188,7 +188,9 @@ class ShelxlMolecule(object):
         self.centric = False
         self.eqivs = {}
         self.dfixs = []
+        self.dangs = []
         self.dfixErr = 0.02
+        self.dangErr = 0.05
 
     def __iter__(self):
         for atom in self.atoms:
@@ -320,6 +322,9 @@ class ShelxlMolecule(object):
     def addDfix(self, value, err, targets):
         self.dfixs.append((value, err, targets))
 
+    def addDfix(self, value, err, targets):
+        self.dangs.append((value, err, targets))
+
     def addEqiv(self, name, data):
         symm = SymmetryElement(data)
         self.eqivs[name] = symm
@@ -369,8 +374,6 @@ class ShelxlMolecule(object):
 
     def _finalizeDfix(self):
         dfixTable = {atom.name.upper(): {} for atom in self.atoms}
-        # for atom in self.atoms:
-        #     print(atom.name)
         for target, err, pairs in self.dfixs:
             if not err:
                 err = self.dfixErr
@@ -385,8 +388,6 @@ class ShelxlMolecule(object):
                     tableField1 = tableRow1[atom2]
                 except KeyError:
                     tableRow1[atom2] = (target, err)
-                # else:
-                #     tableField1.append((target, err))
 
                 atom2 = atom2.upper()
                 try:
@@ -398,8 +399,32 @@ class ShelxlMolecule(object):
                     tableField2 = tableRow2[atom1]
                 except KeyError:
                     tableRow2[atom1] = (target, err)
-                # else:
-                #     tableField2.append((target, err))
+
+        for target, err, pairs in self.dangs:
+            if not err:
+                err = self.dangErr
+            for atom1, atom2 in pairs:
+                atom1 = atom1.upper()
+                try:
+                    tableRow1 = dfixTable[atom1]
+                except KeyError:
+                    tableRow1 = {}
+                    dfixTable[atom1] = tableRow1
+                try:
+                    tableField1 = tableRow1[atom2]
+                except KeyError:
+                    tableRow1[atom2] = (target, err)
+
+                atom2 = atom2.upper()
+                try:
+                    tableRow2 = dfixTable[atom2]
+                except KeyError:
+                    tableRow2 = {}
+                    dfixTable[atom2] = tableRow2
+                try:
+                    tableField2 = tableRow2[atom1]
+                except KeyError:
+                    tableRow2[atom1] = (target, err)
         self.dfixTable = dfixTable
 
 
@@ -548,7 +573,7 @@ class LineParser(BaseParser):
                          'RIGU': self.doNothing,
                          'SADI': self.doNothing,
                          'SAME': self.doNothing,
-                         'DANG': self.doNothing,
+                         'DANG': DangParser,
                          'AFIX': self.doNothing,
                          'PART': self.doNothing,
                          'HKLF': HklfParser,
@@ -751,6 +776,26 @@ class DfixParser(BaseParser):
             i, j = 2 * i, 2 * i + 1
             pairs.append((data[i], data[j]))
             ShelxlReader.CURRENTMOLECULE.addDfix(value, err, pairs)
+
+
+class DangParser(BaseParser):
+    RETURNTYPE = ShelxlLine
+    KEY = 'dfix'
+
+    def finished(self):
+        data = [word for word in self.body[4:].split() if word]
+        value, data = float(data[0]), data[1:]
+        try:
+            err = float(data[0])
+        except ValueError:
+            err = None
+        else:
+            data = data[1:]
+        pairs = []
+        for i in range(len(data) // 2):
+            i, j = 2 * i, 2 * i + 1
+            pairs.append((data[i], data[j]))
+            ShelxlReader.CURRENTMOLECULE.addDang(value, err, pairs)
 
 
 class EqivParser(BaseParser):
