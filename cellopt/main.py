@@ -22,6 +22,11 @@ CLASSPARAMETERS = {'triclinic': ((0, 1, 2, 3, 4, 5), {}),
 
 
 def callShelxl(fileName):
+    """
+    Call SHELXL in a subprocess.
+    :param fileName: str
+    :return: None
+    """
     FNULL = open(os.devnull, 'w')
     try:
         call(['shelxl.exe', fileName], stdout=FNULL, stderr=STDOUT)
@@ -30,6 +35,11 @@ def callShelxl(fileName):
 
 
 def evaluate(fileName):
+    """
+    Call SHELXL and subsequently evaluate the result.
+    :param fileName: str
+    :return: float<wR2>, float<meanDfixFit>, float<weightedDfixFit>
+    """
     callShelxl(fileName)
     wR2 = 999
     with open('work.lst', 'r') as fp:
@@ -45,11 +55,22 @@ def evaluate(fileName):
 
 
 def quickEvaluate(molecule, cell):
+    """
+    Evaluates the DFIX fit to a given cell
+    :param molecule: ShelxlMolecule instance
+    :param cell: list of six floats
+    :return: float<meanDfixFit>, float<weightedDfixFit>
+    """
     molecule.cell = cell
     return molecule.checkDfix()
 
 
 def determineCrystalClass(cell):
+    """
+    Derive crystal class from the cell parameter values of a given cell
+    :param cell: list of six floats
+    :return: str<className>, tuple<constraints>
+    """
     a, b, c, A, B, C = cell[2:]
     cls = 'triclinic'
     if a == b == c and A == B == C and int(float(A)) == 90:
@@ -68,6 +89,14 @@ def determineCrystalClass(cell):
 
 
 def generateJobs(params, cell, delta):
+    """
+    Generate optimization job steps based on a tuple defining constraints, unit cell parameters and the current step
+    size
+    :param params: tuple<constraints>
+    :param cell: list of six floats
+    :param delta: float
+    :return: list of new cells
+    """
     data = [float(x) for x in cell[2:]]
     jobs = [data]
     conDict = params[1]
@@ -91,6 +120,15 @@ def generateJobs(params, cell, delta):
 
 
 def run(fileName, p1=False, overrideClass=None, fast=False, plot=False):
+    """
+    Run the optimizer in 'fast' or 'default' mode.
+    :param fileName: str<Name of the starting parameter shelxl.res file>
+    :param p1: bool<Expand structure to P1/P-1>
+    :param overrideClass: str<name of crystal class>
+    :param fast: bool<use fast optimization scheme>
+    :param plot: bool<plot diagnostics plot.>
+    :return: None
+    """
     plotter = Plotter()
     resFileName = fileName + '.res'
     fileDir = dirname(resFileName)
@@ -216,6 +254,13 @@ def run(fileName, p1=False, overrideClass=None, fast=False, plot=False):
 
 
 def run2(fileName, p1=False, overrideClass=None):
+    """
+    Run the optimizer in 'accurate' mode.
+    :param fileName: str<Name of the starting parameter shelxl.res file>
+    :param p1: bool<Expand structure to P1/P-1>
+    :param overrideClass: str<name of crystal class>
+    :return: None
+    """
     resFileName = fileName + '.res'
     fileDir = dirname(resFileName)
     copyfile(join(fileDir, fileName + '.hkl'), './work.hkl')
@@ -340,16 +385,22 @@ JDICT = {0: 'a',
          5: 'gamma'}
 
 
-def j2Name(j):
-    if not j:
-        return 'No modifications.'
-    j -= 1
-    j = j // 2
-    name = ('Incremented ' if j % 2 else 'Decremented ') + JDICT[j]
-    return name
+# def j2Name(j):
+#     if not j:
+#         return 'No modifications.'
+#     j -= 1
+#     j = j // 2
+#     name = ('Incremented ' if j % 2 else 'Decremented ') + JDICT[j]
+#     return name
 
 
 def cell2String(cell, offset=0):
+    """
+    Returns a nicely formatted string representation of unit cell parameters.
+    :param cell: list
+    :param offset: int<offset of row two and three>
+    :return: str
+    """
     cell = [float(x) for x in cell]
     return '{a:9.4f} {A:9.4f}\n{offset}{b:9.4f} {B:9.4f}\n{offset}{c:9.4f} {C:9.4f}'.format(a=cell[0],
                                                                                             b=cell[1],
@@ -362,11 +413,20 @@ def cell2String(cell, offset=0):
 
 
 class Plotter(object):
+    """
+    Class for accumulating and plotting of data.
+    """
     def __init__(self):
 
         self.values = {}
 
     def __call__(self, **kwargs):
+        """
+        Add data to the plotter.
+        :param kwargs: Each key word will become a data series. Subsequent calls with equal keys will
+         append the datum to the series.
+        :return: None
+        """
         for key, value in kwargs.items():
             try:
                 self.values[key].append(value)
@@ -374,6 +434,10 @@ class Plotter(object):
                 self.values[key] = [value]
 
     def normalize(self):
+        """
+        Subtracts the first value of each series from each datum in the corresponding series.
+        :return:
+        """
         for key, values in self.values.items():
             # m = max(values)
             m = values[0]
@@ -381,12 +445,23 @@ class Plotter(object):
             self.values[key] = [v-m for v in values]
 
 
-    def plot(self, x, y, fileName='', label=''):
+    def plot(self, x, y,  label=''):
+        """
+        Adds a data series to the plot.
+        :param x: float
+        :param y: float
+        :param label: str
+        :return: plot
+        """
         plt.plot(x, y, marker='', label=label)
         plt.legend(loc='upper right')
         return plt
 
     def show(self):
+        """
+        Create and show a plot of the accumulated data.
+        :return: None
+        """
         self.normalize()
         plt = None
         for key, data in self.values.items():

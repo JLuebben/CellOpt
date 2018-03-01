@@ -878,6 +878,9 @@ class CerrParser(BaseParser):
 
 
 class SfacParser(BaseParser):
+    """
+    Parser for SFAC records in shelxl.res files.
+    """
     RETURNTYPE = ShelxlLine
 
     def __call__(self, line):
@@ -904,6 +907,9 @@ class SfacParser(BaseParser):
 
 
 class LattParser(BaseParser):
+    """
+    Parser for LATT records in shelxl.res files.
+    """
     LATTDICT = {1: [],
                 2: [SymmetryElement(('.5', '.5', '.5'))],
                 3: [],
@@ -928,6 +934,9 @@ class LattParser(BaseParser):
 
 
 class SymmParser(BaseParser):
+    """
+    Parser for SYMM records in shelxl.res files.
+    """
     RETURNTYPE = ShelxlLine
     KEY = 'symm'
 
@@ -937,6 +946,9 @@ class SymmParser(BaseParser):
 
 
 class DfixParser(BaseParser):
+    """
+    Parser for DFIX records in shelxl.res files.
+    """
     RETURNTYPE = ShelxlLine
     KEY = 'dfix'
 
@@ -957,6 +969,9 @@ class DfixParser(BaseParser):
 
 
 class DangParser(BaseParser):
+    """
+    Parser for DANG records in shelxl.res files.
+    """
     RETURNTYPE = ShelxlLine
     KEY = 'dfix'
 
@@ -977,6 +992,9 @@ class DangParser(BaseParser):
 
 
 class EqivParser(BaseParser):
+    """
+    Parser for EQIV records in shelxl.res files.
+    """
     RETURNTYPE = ShelxlLine
 
     def finished(self):
@@ -988,11 +1006,17 @@ class EqivParser(BaseParser):
 
 
 class HklfParser(BaseParser):
+    """
+    Parser for HKLF records in shelxl.res files.
+    """
     RETURNTYPE = ShelxlLine
     KEY = 'hklf'
 
 
 class ResiParser(BaseParser):
+    """
+    Parser for RESI records in shelxl.res files.
+    """
     RETURNTYPE = ShelxlLine
     KEY = 'resi'
 
