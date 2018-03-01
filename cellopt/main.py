@@ -50,7 +50,20 @@ def evaluate(fileName):
                 break
     reader = ShelxlReader()
     molecule = reader.read(fileName + '.res')
-    mean, weighted = molecule.checkDfix()
+    try:
+        mean, weighted = molecule.checkDfix()
+    except ZeroDivisionError:
+        print('\n\n\nSomething went wrong while re-refining the structure.')
+        print('\n\nError Messages from work.lst file:')
+        with open('work.lst', 'r') as fp:
+            for line in fp.readlines():
+                if '**' in line:
+                    print(line[:-1])
+        print('\nExiting')
+        exit(1)
+    except ValueError:
+        print('\n\n\nNo DFIX or DANG restraints found in structure.\n\nExiting')
+        exit(2)
     return wR2, mean, weighted
 
 
@@ -62,7 +75,11 @@ def quickEvaluate(molecule, cell):
     :return: float<meanDfixFit>, float<weightedDfixFit>
     """
     molecule.cell = cell
-    return molecule.checkDfix()
+    try:
+        return molecule.checkDfix()
+    except ValueError:
+        print('\n\n\nNo DFIX or DANG restraints found in structure.\n\nExiting')
+        exit(2)
 
 
 def determineCrystalClass(cell):
@@ -151,7 +168,11 @@ def run(fileName, p1=False, overrideClass=None, fast=False, plot=False):
         cls = 'triclinic'
         params = CLASSPARAMETERS[cls]
     originalCell = [float(x) for x in cell[2:]]
-    startDiff, _ = molecule.checkDfix()
+    try:
+        startDiff, _ = molecule.checkDfix()
+    except ValueError:
+        print('\nNo DFIX or DANG restraints found in structure.\n\nExiting')
+        exit(2)
     startDiff0 =startDiff
     lastDiff = 9999
 
@@ -498,7 +519,7 @@ if __name__ == '__main__':
                         help='Create diagnostic plot.')
     args = parser.parse_args()
     expand = args.expand
-    # expand = True
+    expand = True
     crystalClass = args.__dict__['class']
     # crystalClass = 'orthorhombic'
     fileName = args.fileName

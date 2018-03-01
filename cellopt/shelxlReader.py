@@ -58,6 +58,17 @@ class SymmetryElement(object):
         t = (t1 == t2).all()
         return m and t
 
+    def __sub__(self, other):
+        """
+        Computes and returns the translational difference between two SymmetryElements. Returns 999.0 if the elements
+        cannot be superimposed via an integer shift of the translational parts.
+        :param other: SymmetryElement instance
+        :return: float
+        """
+        if not self == other:
+            return 999.
+        return self.trans - other.trans
+
     def applyLattSymm(self, lattSymm):
         """
         Copies SymmetryElement instance and returns the copy after applying the translational part of 'lattSymm'.
@@ -217,6 +228,7 @@ class ShelxlMolecule(object):
         self.dangs = []
         self.dfixErr = 0.02
         self.dangErr = 0.05
+        self.eqivSymmMap = {}
 
     def __iter__(self):
         for atom in self.atoms:
@@ -252,6 +264,7 @@ class ShelxlMolecule(object):
         symmetry equivalent atoms. The returned instance represents the equivalent structural model in P1/P-1.
         :return: ShelxlMolecule
         """
+        # full=True
         if not full:
             symms = [symm for symm in self.symms if not symm.centric]
         else:
@@ -262,6 +275,7 @@ class ShelxlMolecule(object):
         p1Mol.centric = False
         p1Mol.lattOps = []
         specials = []
+        equivSymmMap = {}
 
         for atom in self.atoms:
             # p1Mol.addAtom(atom)
@@ -279,33 +293,62 @@ class ShelxlMolecule(object):
                     # print('Atom {} on special position. (SYMM {})'.format(atom.name, i))
 
                     specials.append(specialName)
+                    continue
                 else:
                     p1Atoms[i + 2].append(vAtom)
                     p1Mol.addAtom(vAtom)
                     p1Mol.atomDict[specialName] = vAtom
 
-        #         for key, eqiv in self.eqivs.items():
-        #             if symm == eqiv:
-        #                 print(i, key)
-        #                 print(symm)
-        #                 print(eqiv)
-        #                 print()
-        #         print()
+                # for key, eqiv in self.eqivs.items():
+                #     if symm == eqiv:
+                #         d = eqiv - symm
+                #         newEqiv = SymmetryElement(['{}+X'.format(d[0]), '{}+Y'.format(d[1]), '{}+Z'.format(d[2])])
+                #         if not key in equivSymmMap:
+                #             equivSymmMap[key] = (resiKey, newEqiv)
+
+        # Expand DFIX restraints.
+        for atom in self.atoms:
+            for i, symm in enumerate(symms):
+                resiKey = str(i + 2)
 
                 for k, dfix in enumerate(p1Mol.dfixs):
                     pairs = set(dfix[2])
-                    # print(dfix)
                     newpairs = set()
                     for pair in pairs:
+                        ii = 0
+                        if '_$' in pair[0]:
+                            ii = 0
+                        elif '_$' in pair[1]:
+                            ii = 1
+                        if ii:
+                            # eName = pair[ii]
+                            # base, eId = eName.split('_')
+                            # print(base, eId)
+                            # try:
+                            #     newID, newSymm = equivSymmMap[eId]
+                            #     eName = base + '_{}_{}'.format(newID, eId)
+                            #     print(eName)
+                            # except KeyError:
+                            #     pass
+                            continue
                         if atom.name in pair:
-                            # print(atom.name, pair)
                             newPair = (pair[0]+'_'+resiKey, pair[1]+'_'+resiKey)
                             if newPair[0] in specials or newPair[1] in specials:
                                 continue
-                            newpairs.add(newPair)
+                            else:
+                                newpairs.add(newPair)
                     p1Mol.dfixs[k] = (dfix[0], dfix[1], list(pairs.union(newpairs)))
+            # input()
+        # exit()
+        self.eqivSymmMap = equivSymmMap
+        # for eKey, newE in equivSymmMap.items():
+        #     print(eKey)
+        #     print(newE[0])
+        #     print(newE[1])
+        #     print()
         p1Mol._finalizeDfix()
         p1AtomList = []
+        # exit()
         for key, values in p1Atoms.items():
             p1AtomList.append(ShelxlLine('RESI sym {}'.format(key)))
             for value in values:
@@ -426,7 +469,7 @@ class ShelxlMolecule(object):
         :param atomPairs: list of tuples of strings
         :return: None
         """
-        self.dfixs.append((value, err, atomPairs))
+        self.dfixs.append((value, err, [tuple([atomName.upper() for atomName in pair]) for pair in atomPairs]))
 
     def addEqiv(self, name, data):
         """
@@ -479,6 +522,8 @@ class ShelxlMolecule(object):
         weighted difference.
         :return: (float<mean>, float<weightedMean>)
         """
+        if not self.dfixTable:
+            raise ValueError('No DFIX restraints found.')
         vSum = 0
         wSum = 0
         sum = 0
