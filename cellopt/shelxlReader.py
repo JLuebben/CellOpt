@@ -1,5 +1,105 @@
-import numpy as np
+# import numpy as np
 from copy import deepcopy
+from math import cos, sin, pi
+
+
+class Array(object):
+    def __init__(self, values):
+        self.values = values
+
+    def __iter__(self):
+        for v in self.values:
+            yield v
+
+    def __len__(self):
+        return len(self.values)
+
+    def __add__(self, other):
+        if type(other) == type(self):
+            if not len(self) == len(other):
+                raise ValueError('Arrays are not of equal length.')
+            return Array([i+j for i, j in zip(self, other)])
+        elif type(other) == float or type(other) == int:
+            return Array([i+other for i in self.values])
+
+    def __imul__(self, other):
+        if type(other) == int:
+            self.values = [v*other for v in self.values]
+            return self
+        else:
+            raise TypeError('Unsupported operation.')
+
+    def __str__(self):
+        return 'Array({})'.format(str(self.values))
+
+    def __getitem__(self, val):
+        try:
+            start, stop, step = val.start, val.stop, val.step
+        except AttributeError:
+            pass
+        else:
+            return self.values[val]
+        finally:
+            return self.values[val]
+
+    def dot(self, other):
+        return sum([i*j for i, j in zip(self, other)])
+
+class Matrix(object):
+    def __init__(self, values):
+        self.shape = (len(values[0]), len(values))
+        self.values = values
+
+    def __getitem__(self, val):
+        if type(val) == tuple:
+            return self.values[val[1]][val[0]]
+
+    def __str__(self):
+        print(self.values)
+        return '\n'.join([str(row) for row in self.values])
+
+    def __imul__(self, other):
+        if type(other) == int:
+            self.values = [[v*other for v in row] for row in self.values]
+            return self
+        else:
+            raise TypeError('Unsupported operation.')
+
+    def transpose(self):
+        rows = []
+        for i in range(self.shape[0]):
+            rows.append([r[i] for r in self.values])
+        return Matrix(rows)
+
+    def dot(self, other):
+        newA = []
+        for i, col in enumerate(self.transpose().values):
+            s = sum([v*o for v, o in zip(col, other)])
+            newA.append(s)
+        return Array(newA)
+        
+
+
+
+# if __name__ == '__main__':
+#     a = Array([1,2,3])
+#     b = Array([1,2,3])
+#     na = np.array([1,2,3])
+#
+#     A = Matrix([[1,2,3],
+#                 [4,5,6],
+#                 [7,8,9]])
+#     nA = np.matrix([[1,2,3],
+#                 [4,5,6],
+#                 [7,8,9]])
+#     print(np.dot(na, nA))
+#     # print(A.shape)
+#     # print(A[1,2])
+#     # print(A.transpose())
+#     # print(A)
+#     print(A.dot(a))
+#     # exit()
+
 
 
 class SymmetryElement(object):
@@ -22,8 +122,8 @@ class SymmetryElement(object):
             line, t = self._parse_line(symm)
             lines.append(line)
             trans.append(t)
-        self.matrix = np.matrix(lines).transpose()
-        self.trans = np.array(trans)
+        self.matrix = Matrix(lines).transpose()
+        self.trans = Array(trans)
         if centric:
             self.matrix *= -1
             self.trans *= -1
@@ -53,8 +153,8 @@ class SymmetryElement(object):
         :return: True/False
         """
         m = (self.matrix == other.matrix).all()
-        t1 = np.array([v % 1 for v in self.trans])
-        t2 = np.array([v % 1 for v in other.trans])
+        t1 = Array([v % 1 for v in self.trans])
+        t2 = Array([v % 1 for v in other.trans])
         t = (t1 == t2).all()
         return m and t
 
@@ -177,9 +277,9 @@ class ShelxlAtom(ShelxlLine):
         else:
             self.name = data[0]
         self.sfac = int(data[1])
-        self.frac = np.array(data[2:5])
+        self.frac = Array(data[2:5])
         self.occ = (data[5] // 1, data[5] % 1)
-        self.adp = np.array(data[6:])
+        self.adp = Array(data[6:])
         if virtual:
             return
         if self.name[0].upper() == 'Q':
@@ -246,16 +346,16 @@ class ShelxlMolecule(object):
         try:
             xx, yy, zz = atom2.frac + 99.5
         except TypeError:
-            xx, yy, zz = np.array(atom2.frac) + 99.5
+            xx, yy, zz = Array(atom2.frac) + 99.5
         dx = (xx - x) % 1 - 0.5
         dy = (yy - y) % 1 - 0.5
         dz = (zz - z) % 1 - 0.5
         a, b, c, alpha, beta, gamma = self.cell
-        alpha = alpha / 180. * np.pi
-        beta = beta / 180. * np.pi
-        gamma = gamma / 180. * np.pi
-        dd = a ** 2 * dx ** 2 + b ** 2 * dy ** 2 + c ** 2 * dz ** 2 + 2 * b * c * np.cos(
-            alpha) * dy * dz + 2 * a * c * np.cos(beta) * dx * dz + 2 * a * b * np.cos(gamma) * dx * dy
+        alpha = alpha / 180. * pi
+        beta = beta / 180. * pi
+        gamma = gamma / 180. * pi
+        dd = a ** 2 * dx ** 2 + b ** 2 * dy ** 2 + c ** 2 * dz ** 2 + 2 * b * c * cos(
+            alpha) * dy * dz + 2 * a * c * cos(beta) * dx * dz + 2 * a * b * cos(gamma) * dx * dy
         return dd ** .5
 
     def asP1(self, full=False):
@@ -281,7 +381,7 @@ class ShelxlMolecule(object):
             # p1Mol.addAtom(atom)
             for i, symm in enumerate(symms):
                 resiKey = str(i + 2)
-                newFrac = (np.dot(atom.frac, symm.matrix) + symm.trans).flatten().tolist()[0]
+                newFrac = symm.matrix.dot(atom.frac) + symm.trans
                 vAtom = ShelxlAtom(atom.rawData, virtual=True)
                 vAtom.frac = newFrac
                 # vAtom.name += 'X{}'.format(i)
@@ -377,7 +477,7 @@ class ShelxlMolecule(object):
         :param cell: list of six floats
         :return: None
         """
-        self.cell = np.array([float(c) for c in cell])
+        self.cell = Array([float(c) for c in cell])
 
     def setWavelength(self, w):
         """
@@ -401,7 +501,7 @@ class ShelxlMolecule(object):
         :param cerr: list of six floats
         :return: None
         """
-        self.cerr = np.array([float(c) for c in cerr])
+        self.cerr = Array([float(c) for c in cerr])
 
     def addSfac(self, sfac):
         """
@@ -500,7 +600,7 @@ class ShelxlMolecule(object):
         base, equiv = atomName.split('_$')
         symm = self.eqivs['$' + equiv]
         atom = self.getAtom(base)
-        newFrac = (np.dot(atom.frac, symm.matrix) + symm.trans).flatten().tolist()[0]
+        newFrac = (symm.matrix.dot(atom.frac) + symm.trans)
         vAtom = ShelxlAtom(atom.rawData, virtual=True)
         vAtom.frac = newFrac
         return vAtom
@@ -903,7 +1003,7 @@ class CellParser(BaseParser):
     KEY = 'cell'
 
     def finished(self):
-        data = np.array([float(word) for word in self.body.split()[1:] if word])
+        data = Array([float(word) for word in self.body.split()[1:] if word])
         ShelxlReader.CURRENTMOLECULE.setCell(data[1:])
         ShelxlReader.CURRENTMOLECULE.setWavelength(data[0])
         ShelxlReader.CURRENTINSTANCE['cell'] = self.body
@@ -917,7 +1017,7 @@ class CerrParser(BaseParser):
     KEY = 'cerr'
 
     def finished(self):
-        data = np.array([float(word) for word in self.body.split()[1:] if word])
+        data = Array([float(word) for word in self.body.split()[1:] if word])
         ShelxlReader.CURRENTMOLECULE.setCerr(data[1:])
         ShelxlReader.CURRENTMOLECULE.setZ(data[0])
 
