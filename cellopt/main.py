@@ -1,6 +1,6 @@
 from __future__ import print_function
 from copy import deepcopy
-from math import cos, sin, pi
+from math import cos, pi
 from subprocess import call, STDOUT
 from shutil import copyfile
 import os
@@ -12,12 +12,13 @@ try:
     PLOTAVAILABLE = True
 except ImportError:
     PLOTAVAILABLE = False
+    plt = None
 
 
 CLASSPARAMETERS = {'triclinic': ((0, 1, 2, 3, 4, 5), {}),
                    'monoclinic': ((0, 1, 2, 4), {}),
                    'orthorhombic': ((0, 1, 2), {}),
-                   'tetragonal': ((0, 2), {1: 0}),
+                   'tetragonal': ((0, 2), {0: (1,)}),
                    'rhombohedral': ((0, 3), {0: (1, 2), 3: (4, 5)}),
                    'hexagonal': ((0, 2), {0: (1,)}),
                    'cubic': ((0,), {0: (1, 2)})}
@@ -52,6 +53,7 @@ def evaluate(fileName):
                 break
     reader = ShelxlReader()
     molecule = reader.read(fileName + '.res')
+    mean, weighted = None, None
     try:
         mean, weighted = molecule.checkDfix()
     except ZeroDivisionError:
@@ -118,22 +120,20 @@ def generateJobs(params, cell, delta):
     """
     data = [float(x) for x in cell[2:]]
     jobs = [data]
-    conDict = params[1]
+    refine, conDict = params
     for p in params[0]:
-        try:
-            cons = conDict[p]
-        except:
-            cons = []
         j = data[:]
         j[p] -= delta
-        for con in cons:
-            j[con] = j[p]
+        for source, targets in conDict.items():
+            for target in targets:
+                j[target] = j[source]
         jobs.append(j)
 
         j = data[:]
         j[p] += delta
-        for con in cons:
-            j[con] = j[p]
+        for source, targets in conDict.items():
+            for target in targets:
+                j[target] = j[source]
         jobs.append(j)
     return jobs
 
@@ -170,18 +170,19 @@ def run(fileName, p1=False, overrideClass=None, fast=False, plot=False):
         cls = 'triclinic'
         params = CLASSPARAMETERS[cls]
     originalCell = [float(x) for x in cell[2:]]
+    startDiff = 999
     try:
         startDiff, _ = molecule.checkDfix()
     except ValueError:
         print('\nNo DFIX or DANG restraints found in structure.\n\nExiting')
         exit(2)
-    startDiff0 =startDiff
+    startDiff0 = startDiff
     lastDiff = 9999
 
     iterations = 25
 
     i = -1
-    barLengths = 30
+    barLengths = 20
 
     print('  ' + (barLengths - 8) // 2 * '-' + 'Progress' + (
                 barLengths - 8) // 2 * '-' + '  ---Fit--   ---a---   ---b---   ---c---   -alpha-   --beta-   -gamma-')
@@ -239,29 +240,19 @@ def run(fileName, p1=False, overrideClass=None, fast=False, plot=False):
             wR2, mean, weighted = evaluate('work')
             newReader = ShelxlReader()
             molecule = newReader.read('work.res')
-            progress = (i) / iterations
+            progress = i / iterations
             progress = int(barLengths * progress)
             sys.stdout.write(
-                '\r [' + progress * '#' + (barLengths - progress) * '-' + '] {fit:8.6f} {cell}'.format(fit=weighted,
-                                                                                                       cell=' '.join([
-                                                                                                           '{:9.4f}'.format(
-                                                                                                               p)
-                                                                                                           for
-                                                                                                           p
-                                                                                                           in
-                                                                                                           job])))
+                '\r [' + progress * '#' + (barLengths - progress) * '-'
+                + '] {fit:8.6f} {cell}'.format(fit=weighted,
+                                               cell=' '.join(['{:9.4f}'.format(p) for p in job])))
             sys.stdout.flush()
         else:
             progress = barLengths
             sys.stdout.write(
-                '\r [' + progress * '#' + (barLengths - progress) * '-' + '] {fit:8.6f} {cell}'.format(fit=weighted,
-                                                                                                       cell=' '.join([
-                                                                                                           '{:9.4f}'.format(
-                                                                                                               p)
-                                                                                                           for
-                                                                                                           p
-                                                                                                           in
-                                                                                                           job])))
+                '\r [' + progress * '#' + (barLengths - progress) * '-'
+                + '] {fit:8.6f} {cell}'.format(fit=weighted,
+                                               cell=' '.join(['{:9.4f}'.format(p) for p in job])))
             sys.stdout.flush()
             break
         startDiff = sbestW
@@ -462,9 +453,7 @@ class Plotter(object):
         :return:
         """
         for key, values in self.values.items():
-            # m = max(values)
             m = values[0]
-            # self.values[key] = [v/m for v in values]
             self.values[key] = [v-m for v in values]
 
 
@@ -748,7 +737,7 @@ class ShelxlAtom(ShelxlLine):
         self.resiClass = resi[0]
         # print(resi)
         if resi[1]:
-            self.name = data[0] + '_{}'.format(resi[1])
+            self.name = str(data[0]) + '_{}'.format(resi[1])
             # print(self.name)
         else:
             self.name = data[0]
@@ -1349,7 +1338,6 @@ class LineParser(BaseParser):
                          'TITL': self.doNothing,
                          'CELL': CellParser,
                          'ZERR': CerrParser,
-                         'LATT': self.doNothing,
                          'SYMM': SymmParser,
                          'SFAC': SfacParser,
                          'UNIT': self.doNothing,
@@ -1358,7 +1346,6 @@ class LineParser(BaseParser):
                          'BOND': self.doNothing,
                          'ACTA': self.doNothing,
                          'LIST': self.doNothing,
-                         'FMAP': self.doNothing,
                          'PLAN': self.doNothing,
                          'WGHT': self.doNothing,
                          'FVAR': self.doNothing,
@@ -1408,14 +1395,10 @@ class LineParser(BaseParser):
                          'NCSY': self.doNothing,
                          'NEUT': self.doNothing,
                          'OMIT': self.doNothing,
-                         'PLAN': self.doNothing,
                          'PRIG': self.doNothing,
                          'RESI': ResiParser,
                          'RTAB': self.doNothing,
-                         'SADI': self.doNothing,
-                         'SAME': self.doNothing,
                          'SHEL': self.doNothing,
-                         'SIMU': self.doNothing,
                          'SIZE': self.doNothing,
                          'SPEC': self.doNothing,
                          'STIR': self.doNothing,
@@ -1426,10 +1409,8 @@ class LineParser(BaseParser):
                          'WIGL': self.doNothing,
                          'WPDB': self.doNothing,
                          'XNPD': self.doNothing,
-                         'REM': self.doNothing,
                          'Q': self.doNothing,
                          'END': self.doNothing,
-                         'BEDE': self.doNothing,
                          'LONE': self.doNothing,
                          '+': self.doNothing,
                          }
