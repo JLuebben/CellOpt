@@ -1756,6 +1756,13 @@ if __name__ == '__main__':
     crystalClass = args.__dict__['class']
     # crystalClass = 'orthorhombic'
     fileName = args.fileName
+
+    if not os.path.isfile(fileName+'.res'):
+        print('File {}.res is missing.'.format(fileName))
+        exit(3)
+    if not os.path.isfile(fileName+'.hkl'):
+        print('File {}.hkl is missing.'.format(fileName))
+        exit(4)
     # print(fileName)
     # crystalClass = 'monoclinic'
     mode = args.mode
