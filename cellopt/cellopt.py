@@ -1859,3 +1859,22 @@ if __name__ == '__main__':
         run(fileName, p1=expand, overrideClass=crystalClass, fast=True, plot=plot)
     elif mode is 'accurate':
         run2(fileName, p1=expand)
+
+    import urllib.request
+    import json
+    import subprocess
+    try:
+        localVersion = subprocess.check_output(["git2", "rev-parse", "HEAD"]).decode().strip()
+    except:
+        pass
+    else:
+        try:
+            with urllib.request.urlopen('https://api.github.com/repos/JLuebben/CellOpt/commits/master ') as response:
+                jsonData = response.read()
+                data = json.loads(jsonData)
+                remoteVersion = str(data['sha'])
+                if not remoteVersion == localVersion:
+                    print('A new version of cellopt.py is available at\n'
+                          '     https://github.com/JLuebben/CellOpt')
+        except:
+            pass
