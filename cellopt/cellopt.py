@@ -1858,7 +1858,7 @@ if __name__ == '__main__':
     import json
     import subprocess
     try:
-        localVersion = subprocess.check_output(["git2", "rev-parse", "HEAD"]).decode().strip()
+        localVersion = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
     except:
         pass
     else:
@@ -1868,7 +1868,7 @@ if __name__ == '__main__':
                 data = json.loads(jsonData)
                 remoteVersion = str(data['sha'])
                 if not remoteVersion == localVersion:
-                    print('A new version of cellopt.py is available at\n'
+                    print('\n\nA new version of cellopt.py is available at\n'
                           '     https://github.com/JLuebben/CellOpt')
         except:
             pass
