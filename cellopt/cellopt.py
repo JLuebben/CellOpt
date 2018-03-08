@@ -7,6 +7,7 @@ import os
 import sys
 import argparse
 from os.path import dirname, join
+from collections import OrderedDict
 try:
     import matplotlib.pyplot as plt
     PLOTAVAILABLE = True
@@ -66,8 +67,17 @@ def evaluate(fileName):
         print('\nExiting')
         exit(1)
     except ValueError:
-        print('\n\n\nNo DFIX or DANG restraints found in structure.\n\nExiting')
-        exit(2)
+        print('\n\n\nSomething went wrong while re-refining the structure.')
+        print('\n\nError Messages from work.lst file:')
+        with open('work.lst', 'r') as fp:
+            for line in fp.readlines():
+                if '**' in line:
+                    print(line[:-1])
+                    break
+        print('\nExiting')
+        exit(1)
+        # print('\n\n\nNo DFIX or DANG restraints found in structure.\n\nExiting')
+        # exit(2)
     return wR2, mean, weighted
 
 
@@ -538,6 +548,8 @@ class Matrix(object):
 
     def __getitem__(self, val):
         if type(val) == tuple:
+            if len(val) == 1:
+                return self.values[val[0]]
             return self.values[val[1]][val[0]]
 
     def __str__(self):
@@ -734,10 +746,9 @@ class ShelxlAtom(ShelxlLine):
         data = [word for word in line.split() if word]
         data = [float(word) if i else word for i, word in enumerate(data)]
         self.data = data
-        self.resiClass = resi[0]
-        # print(resi)
+        self.resiClass = resi[1]
         if resi[1]:
-            self.name = str(data[0]) + '_{}'.format(resi[1])
+            self.name = str(data[0]) + '_{}'.format(resi[0])
             # print(self.name)
         else:
             self.name = data[0]
@@ -762,12 +773,17 @@ class ShelxlAtom(ShelxlLine):
         Returns a string representation of a shelxl atom as expected by SHELXL.
         :return: str
         """
-        return '{name:8} {sfac} {frac} {occ:6.3f} {adp}\n'.format(name=self.name,
-                                                                  sfac=self.sfac,
-                                                                  frac=' '.join(
-                                                                      ['{:6.4f}'.format(c) for c in self.frac]),
-                                                                  occ=sum(self.occ),
-                                                                  adp=' '.join(['{:6.4f}'.format(c) for c in self.adp]))
+        string = '{name:8} {sfac} {frac} {occ:6.3f} {adp}\n'.format(name=self.name.split('_')[0],
+                                                                    sfac=self.sfac,
+                                                                    frac=' '.join(
+                                                                        ['{:6.4f}'.format(c) for c in self.frac]),
+                                                                    occ=sum(self.occ),
+                                                                    adp=' '.join(['{:6.4f}'.format(c) for c in self.adp]))
+        if len(string) > 75:
+            string = string.split()
+            string = string[:7] + ['=\n   '] + string[7:] + ['\n']
+            string = ' '.join(string)
+        return string
 
 
 class ShelxlMolecule(object):
@@ -782,7 +798,7 @@ class ShelxlMolecule(object):
         self.sfacs = []
         self.customSfacData = {}
         self.atoms = []
-        self.atomDict = {}
+        self.atomDict = OrderedDict()
         self.qPeaks = []
         self.cell = []
         self.cerr = []
@@ -795,6 +811,8 @@ class ShelxlMolecule(object):
         self.dfixErr = 0.02
         self.dangErr = 0.05
         self.eqivSymmMap = {}
+        self.resiClass2Nums = {}
+        self.resis = []
 
     def __iter__(self):
         for atom in self.atoms:
@@ -929,6 +947,13 @@ class ShelxlMolecule(object):
         """
         self.atoms.append(atom)
 
+    def addResidue(self, num, cls):
+        try:
+            self.resiClass2Nums[cls].append(num)
+        except KeyError:
+            self.resiClass2Nums[cls] = [num,]
+        self.resis.append((cls,num))
+
     def addQPeak(self, qPeak):
         """
         Add a Q-Peak
@@ -1037,6 +1062,9 @@ class ShelxlMolecule(object):
         """
         self.dfixs.append((value, err, [tuple([atomName.upper() for atomName in pair]) for pair in atomPairs]))
 
+    def addDang(self, value, err, atomPairs):
+        self.dangs.append((value, err, [tuple([atomName.upper() for atomName in pair]) for pair in atomPairs]))
+
     def addEqiv(self, name, data):
         """
         Adds an EQIV instruction to the model.
@@ -1055,7 +1083,18 @@ class ShelxlMolecule(object):
         """
         if '_$' in atomName:
             return self.getVirtualAtom(atomName)
-        return self.atomDict[atomName]
+        try:
+            return self.atomDict[atomName]
+        except KeyError:
+            if '_' in atomName:
+                base, cls = atomName.split('_')
+                resiNums = self.resiClass2Nums[cls]
+                names = ['{}_{}'.format(base, num) for num in resiNums]
+                return [self.atomDict[name] for name in names if name in self.atomDict]
+            else:
+                return [value for key, value in self.atomDict.items() if key.split('_')[0] == atomName]
+            # else:
+            #     raise KeyError('No atom named {}.'.format(atomName))
 
     def getVirtualAtom(self, atomName):
         """
@@ -1076,7 +1115,7 @@ class ShelxlMolecule(object):
         Called after reading a shelxl.res file. Sets up atom table and restraint table.
         :return: None
         """
-        self.atomDict = {}
+        self.atomDict = OrderedDict()
         for atom in self.atoms:
             self.atomDict[atom.name] = atom
         self._finalizeDfix()
@@ -1097,16 +1136,27 @@ class ShelxlMolecule(object):
         for atom1, dfixs in self.dfixTable.items():
             for atom2, data in dfixs.items():
                 target, err = data
-                try:
+                a1s = self.getAtom(atom1)
+                a2s = self.getAtom(atom2)
+                if type(a1s) is list and type(a2s) is list:
+                    for a1, a2 in zip(a1s, a2s):
+                        d = self.distance(a1, a2)
+                        diff = abs(d - target) ** 2
+                        vSum += diff * err
+                        wSum += err
+                        sum += diff
+                        i += 1
+                elif type(a1s) is list or type(a2s) is list:
+                    raise ValueError('Cellopt does not support restraints between different residues.')
+                else:
                     d = self.distance(self.getAtom(atom1), self.getAtom(atom2))
-                except ValueError:
-                    print(atom1, atom2)
-                diff = abs(d - target) ** 2
-                vSum += diff * err
-                wSum += err
-                sum += diff
-                i += 1
-
+                    diff = abs(d - target) ** 2
+                    vSum += diff * err
+                    wSum += err
+                    sum += diff
+                    i += 1
+        # print((sum / i) ** .5, (vSum / wSum) ** .5)
+        # exit()
         return (sum / i) ** .5, (vSum / wSum) ** .5
 
     def _finalizeDfix(self):
@@ -1559,7 +1609,12 @@ class DfixParser(BaseParser):
     KEY = 'dfix'
 
     def finished(self):
-        data = [word for word in self.body[4:].split() if word]
+        data = [word for word in self.body.split() if word]
+        command = data.pop(0)
+        try:
+            _, resi = command.split('_')
+        except ValueError:
+            resi = None
         value, data = float(data[0]), data[1:]
         try:
             err = float(data[0])
@@ -1570,7 +1625,11 @@ class DfixParser(BaseParser):
         pairs = []
         for i in range(len(data) // 2):
             i, j = 2 * i, 2 * i + 1
-            pairs.append((data[i], data[j]))
+            name1, name2 = data[i], data[j]
+            if resi:
+                name1 = name1 + '_{}'.format(resi)
+                name2 = name2 + '_{}'.format(resi)
+            pairs.append((name1, name2))
             ShelxlReader.CURRENTMOLECULE.addDfix(value, err, pairs)
 
 
@@ -1582,7 +1641,8 @@ class DangParser(BaseParser):
     KEY = 'dfix'
 
     def finished(self):
-        data = [word for word in self.body[4:].split() if word]
+        data = [word for word in self.body.split() if word]
+        command = data.pop(0)
         value, data = float(data[0]), data[1:]
         try:
             err = float(data[0])
@@ -1630,6 +1690,7 @@ class ResiParser(BaseParser):
         data = [word for word in self.body[4:].split() if word]
         cls, num = data[0], data[1]
         ShelxlReader.CURRENTINSTANCE.setCurrentResi(cls, num)
+        ShelxlReader.CURRENTMOLECULE.addResidue(cls, num)
 
 
 class Reader(object):
