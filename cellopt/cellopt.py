@@ -176,7 +176,12 @@ def run(fileName, p1=False, overrideClass=None, fast=False, plot=False):
             print('Expanding to P1.')
         else:
             print('Expanding to P-1.')
-        reader.toP1()
+        try:
+            reader.toP1()
+        except ValueError:
+            print('Expanding Structures to P1/P-1 is not supported for structures\n'
+                  'containing multiple residues.')
+            exit(3)
         cls = 'triclinic'
         params = CLASSPARAMETERS[cls]
     originalCell = [float(x) for x in cell[2:]]
@@ -516,6 +521,8 @@ class Array(object):
             return Array([i + j for i, j in zip(self, other)])
         elif type(other) == float or type(other) == int:
             return Array([i + other for i in self.values])
+        else:
+            raise TypeError('Cannot add type Array to type {}.'.format(str(type(other))))
 
     def __imul__(self, other):
         if type(other) == int:
@@ -652,9 +659,9 @@ class SymmetryElement(object):
         """
         # newSymm = deepcopy(self)
         newSymm = SymmetryElement(self.toShelxl().split(','))
-        newSymm.trans = [(self.trans[0] + lattSymm.trans[0]) / 1,
+        newSymm.trans = Array([(self.trans[0] + lattSymm.trans[0]) / 1,
                          (self.trans[1] + lattSymm.trans[1]) / 1,
-                         (self.trans[2] + lattSymm.trans[2]) / 1]
+                         (self.trans[2] + lattSymm.trans[2]) / 1])
         newSymm.centric = self.centric
         return newSymm
 
@@ -849,11 +856,15 @@ class ShelxlMolecule(object):
         :return: ShelxlMolecule
         """
         # full=True
+        resiOffset = int(max(self.resis, key=lambda resi:int(resi[1]))[1])
+        if resiOffset > 2:
+            raise ValueError('Expanding structures to P1/P-1 is not supported for structures '
+                             'containing multiple residues.')
         if not full:
             symms = [symm for symm in self.symms if not symm.centric]
         else:
             symms = self.symms[:]
-        p1Atoms = {i + 2: [] for i in range(len(symms))}
+        p1Atoms = {str(i + 2+resiOffset): [] for i in range(len(symms))}
         p1Mol = deepcopy(self)
         p1Mol.symms = []
         p1Mol.centric = False
@@ -864,8 +875,9 @@ class ShelxlMolecule(object):
         for atom in self.atoms:
             # p1Mol.addAtom(atom)
             for i, symm in enumerate(symms):
-                resiKey = str(i + 2)
-                newFrac = symm.matrix.dot(atom.frac) + symm.trans
+                resiKey = str(i + 2+resiOffset)
+                newFrac = symm.matrix.dot(atom.frac)
+                newFrac = newFrac + symm.trans
                 vAtom = ShelxlAtom(atom.rawData, virtual=True)
                 vAtom.frac = newFrac
                 # vAtom.name += 'X{}'.format(i)
@@ -879,7 +891,7 @@ class ShelxlMolecule(object):
                     specials.append(specialName)
                     continue
                 else:
-                    p1Atoms[i + 2].append(vAtom)
+                    p1Atoms[resiKey].append(vAtom)
                     p1Mol.addAtom(vAtom)
                     p1Mol.atomDict[specialName] = vAtom
 
@@ -893,7 +905,7 @@ class ShelxlMolecule(object):
         # Expand DFIX restraints.
         for atom in self.atoms:
             for i, symm in enumerate(symms):
-                resiKey = str(i + 2)
+                resiKey = str(i + 2+resiOffset)
 
                 for k, dfix in enumerate(p1Mol.dfixs):
                     pairs = set(dfix[2])
@@ -935,8 +947,11 @@ class ShelxlMolecule(object):
         # exit()
         for key, values in p1Atoms.items():
             p1AtomList.append(ShelxlLine('RESI sym {}'.format(key)))
+            # print( key)
             for value in values:
                 p1AtomList.append(value)
+                # print(value.name)
+            # input()
         return p1Mol, p1AtomList
 
     def addAtom(self, atom):
@@ -1091,10 +1106,10 @@ class ShelxlMolecule(object):
                 resiNums = self.resiClass2Nums[cls]
                 names = ['{}_{}'.format(base, num) for num in resiNums]
                 return [self.atomDict[name] for name in names if name in self.atomDict]
-            else:
-                return [value for key, value in self.atomDict.items() if key.split('_')[0] == atomName]
             # else:
-            #     raise KeyError('No atom named {}.'.format(atomName))
+            #     return [value for key, value in self.atomDict.items() if key.split('_')[0] == atomName]
+            else:
+                raise KeyError('No atom named {}.'.format(atomName))
 
     def getVirtualAtom(self, atomName):
         """
@@ -1643,6 +1658,10 @@ class DangParser(BaseParser):
     def finished(self):
         data = [word for word in self.body.split() if word]
         command = data.pop(0)
+        try:
+            _, resi = command.split('_')
+        except ValueError:
+            resi = None
         value, data = float(data[0]), data[1:]
         try:
             err = float(data[0])
@@ -1653,7 +1672,11 @@ class DangParser(BaseParser):
         pairs = []
         for i in range(len(data) // 2):
             i, j = 2 * i, 2 * i + 1
-            pairs.append((data[i], data[j]))
+            name1, name2 = data[i], data[j]
+            if resi:
+                name1 = name1 + '_{}'.format(resi)
+                name2 = name2 + '_{}'.format(resi)
+            pairs.append((name1, name2))
             ShelxlReader.CURRENTMOLECULE.addDang(value, err, pairs)
 
 
