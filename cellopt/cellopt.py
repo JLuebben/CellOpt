@@ -1711,7 +1711,11 @@ class ResiParser(BaseParser):
 
     def finished(self):
         data = [word for word in self.body[4:].split() if word]
-        cls, num = data[0], data[1]
+        try:
+            cls, num = data[0], data[1]
+        except IndexError:
+            cls = None
+            num = data[0]
         ShelxlReader.CURRENTINSTANCE.setCurrentResi(cls, num)
         ShelxlReader.CURRENTMOLECULE.addResidue(cls, num)
 
@@ -1825,7 +1829,7 @@ if __name__ == '__main__':
                         help='Expand structure to P1 (P-1 for centric structures) before refinement. Note that a'
                              'potential center of invasion is not expanded to ensure the stability of intermediate'
                              'refinement steps. --class argument will be ignored.')
-    parser.add_argument('--mode', '-m', type=str, default='default', nargs=1,
+    parser.add_argument('--mode', '-m', type=str, default='default',
                         help="Specify optimization scheme. The {fast} scheme uses a simplex algorithm to optimize cell "
                              "parameters against DFIX restraints. The {default} scheme runs a SHELXL optimization step "
                              "after each time the simplex optimization converged and restarts the simplex (requires "
@@ -1849,9 +1853,9 @@ if __name__ == '__main__':
     plot = args.plot
     if mode is 'default':
         run(fileName, p1=expand, overrideClass=crystalClass, plot=plot)
-    elif mode is 'fast':
+    elif 'fast' in mode:
         run(fileName, p1=expand, overrideClass=crystalClass, fast=True, plot=plot)
-    elif mode is 'accurate':
+    elif 'accurate' in mode:
         run2(fileName, p1=expand)
 
     import urllib.request
