@@ -277,7 +277,7 @@ def run(fileName, p1=False, overrideClass=None, fast=False, plot=False):
     print('   Final Cell:', cell2String(cell[2:], offset=15))
 
     print('\nOriginal DFIX fit: {:8.6f}'.format(startDiff0))
-    print('   Final DFIX fit: {:8.6f}'.format(weighted))
+    print('   Final DFIX fit: {:8.6f}'.format(sbestW))
     if plot:
         plotter.show()
 
