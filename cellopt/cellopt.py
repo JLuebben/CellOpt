@@ -176,12 +176,7 @@ def run(fileName, p1=False, overrideClass=None, fast=False, plot=False):
             print('Expanding to P1.')
         else:
             print('Expanding to P-1.')
-        try:
-            reader.toP1()
-        except ValueError:
-            print('Expanding Structures to P1/P-1 is not supported for structures\n'
-                  'containing multiple residues.')
-            exit(3)
+        reader.toP1()
         cls = 'triclinic'
         params = CLASSPARAMETERS[cls]
     originalCell = [float(x) for x in cell[2:]]
@@ -740,20 +735,80 @@ class ShelxlLine(object):
         :return: str
         """
         return self.line + '\n'
+    
+class ShelxlRestraint(ShelxlLine):
+    RESICLASSOVERRIDE = 'symm'
+    def __init__(self, line, key=None):
+        super(ShelxlRestraint, self).__init__(line, key=key)
+        l = [word for word in line.split() if word]
+        cmd = l.pop(0)
+        if '_' in cmd:
+            cmd, suffix = cmd.split('_')
+        else:
+            suffix = None
+        self.cmd = cmd
+        self.suffix = suffix
+        self.target = float(l.pop(0))
+        try:
+            err = float(l[0])
+        except ValueError:
+            self.err = None
+        else:
+            self.err = err
+            l.pop(0)
+        pairs = []
+        for i in range(len(l) // 2):
+            i, j = 2 * i, 2 * i + 1
+            name1, name2 = l[i], l[j]
+            # if resi:
+            #     name1 = name1 + '_{}'.format(resi)
+            #     name2 = name2 + '_{}'.format(resi)
+            pairs.append((name1, name2))
+        self.pairs = pairs
+        # print(self)
+        # exit()
+
+    def write(self):
+        return '{cmd} {target} {err} {pairs}\n'.format(cmd=self.cmd+('_{}'.format(self.suffix) if self.suffix else ''),
+                                                     target='{:6.4f}'.format(self.target),
+                                                     err='{:6.4f}'.format(self.err) if self.err else '',
+                                                     pairs=' '.join(['{} {}'.format(atom1, atom2) for atom1, atom2 in self.pairs]))
+
+    def __str__(self):
+        return self.write()
+        
+    def setSuffix(self, suffix):
+        self.suffix = suffix
+
+    def __iter__(self):
+        for x in (self.target, self.err, self.pairs):
+            yield x
+
+    def __getitem__(self, item):
+        return (self.target, self.err, self.pairs)[item]
+
+    
 
 
 class ShelxlAtom(ShelxlLine):
     """
     Class Representing an Atom in a Shelxl.res file.
     """
+    lastAfix = 0
+    lastPart = 0
 
-    def __init__(self, line, virtual=False, key=None, resi=('', 0)):
+    def __init__(self, line, virtual=False, key=None, resi=(0, ''), afix=0, part=0):
+        self.afix = afix
+        self.part = part
         self.rawData = line
         self.key = key
         data = [word for word in line.split() if word]
         data = [float(word) if i else word for i, word in enumerate(data)]
         self.data = data
         self.resiClass = resi[1]
+        self.resiNum = resi[0]
+        if self.resiClass:
+            ShelxlRestraint.RESICLASSOVERRIDE = None
         if resi[1]:
             self.name = str(data[0]) + '_{}'.format(resi[0])
             # print(self.name)
@@ -780,6 +835,16 @@ class ShelxlAtom(ShelxlLine):
         Returns a string representation of a shelxl atom as expected by SHELXL.
         :return: str
         """
+        if not self.part == self.lastPart:
+            part = 'PART {}\n'.format(self.part)
+            ShelxlAtom.lastpart = self.part
+        else:
+            part = ''
+        if not self.afix == self.lastAfix:
+            afix = 'AFIX {}\n'.format(self.afix)
+            ShelxlAtom.lastAfix = self.afix
+        else:
+            afix = ''
         string = '{name:8} {sfac} {frac} {occ:6.3f} {adp}\n'.format(name=self.name.split('_')[0],
                                                                     sfac=self.sfac,
                                                                     frac=' '.join(
@@ -790,7 +855,7 @@ class ShelxlAtom(ShelxlLine):
             string = string.split()
             string = string[:7] + ['=\n   '] + string[7:] + ['\n']
             string = ' '.join(string)
-        return string
+        return part+afix+ string
 
 
 class ShelxlMolecule(object):
@@ -856,42 +921,51 @@ class ShelxlMolecule(object):
         :return: ShelxlMolecule
         """
         # full=True
-        resiOffset = int(max(self.resis, key=lambda resi:int(resi[1]))[1])
-        if resiOffset > 2:
-            raise ValueError('Expanding structures to P1/P-1 is not supported for structures '
-                             'containing multiple residues.')
+        try:
+            resiOffset = int(max(self.resis, key=lambda resi: int(resi[1]))[1])
+        except:
+            resiOffset = 1
+        # if resiOffset > 2:
+        #     raise ValueError('Expanding structures to P1/P-1 is not supported for structures '
+        #                      'containing multiple residues.')
         if not full:
             symms = [symm for symm in self.symms if not symm.centric]
         else:
             symms = self.symms[:]
-        p1Atoms = {str(i + 2+resiOffset): [] for i in range(len(symms))}
+        # p1Atoms = {str(i + 2+resiOffset): [] for i in range(len(symms)*resiOffset)}
         p1Mol = deepcopy(self)
         p1Mol.symms = []
         p1Mol.centric = False
         p1Mol.lattOps = []
         specials = []
-        equivSymmMap = {}
-
-        for atom in self.atoms:
+        # equivSymmMap = {}
+        for atom in self.atoms[:]:
             # p1Mol.addAtom(atom)
+            # print(atom.name)
             for i, symm in enumerate(symms):
-                resiKey = str(i + 2+resiOffset)
+                # break
+                resiKey = str((i+1)*(resiOffset)+(int(atom.resiNum if atom.resiNum else 0)))
+                # print(resiKey, i)
                 newFrac = symm.matrix.dot(atom.frac)
                 newFrac = newFrac + symm.trans
                 vAtom = ShelxlAtom(atom.rawData, virtual=True)
+                vAtom.resiClass = atom.resiClass
+                vAtom.resiNum = resiKey
+                vAtom.afix = atom.afix
+                vAtom.part = atom.part
                 vAtom.frac = newFrac
                 # vAtom.name += 'X{}'.format(i)
                 vAtom.occ = (10, 1)
                 atom.occ = (10, 1)
                 distance = self.distance(atom, vAtom)
-                specialName = atom.name + '_' + resiKey
+                specialName = atom.name.split('_')[0] + '_' + resiKey
                 if distance < 0.1:
                     # print('Atom {} on special position. (SYMM {})'.format(atom.name, i))
 
                     specials.append(specialName)
                     continue
                 else:
-                    p1Atoms[resiKey].append(vAtom)
+                    # p1Atoms[resiKey].append(vAtom)
                     p1Mol.addAtom(vAtom)
                     p1Mol.atomDict[specialName] = vAtom
 
@@ -903,55 +977,62 @@ class ShelxlMolecule(object):
                 #             equivSymmMap[key] = (resiKey, newEqiv)
 
         # Expand DFIX restraints.
-        for atom in self.atoms:
-            for i, symm in enumerate(symms):
-                resiKey = str(i + 2+resiOffset)
-
-                for k, dfix in enumerate(p1Mol.dfixs):
-                    pairs = set(dfix[2])
-                    newpairs = set()
-                    for pair in pairs:
-                        ii = 0
-                        if '_$' in pair[0]:
-                            ii = 0
-                        elif '_$' in pair[1]:
-                            ii = 1
-                        if ii:
-                            # eName = pair[ii]
-                            # base, eId = eName.split('_')
-                            # print(base, eId)
-                            # try:
-                            #     newID, newSymm = equivSymmMap[eId]
-                            #     eName = base + '_{}_{}'.format(newID, eId)
-                            #     print(eName)
-                            # except KeyError:
-                            #     pass
-                            continue
-                        if atom.name in pair:
-                            newPair = (pair[0] + '_' + resiKey, pair[1] + '_' + resiKey)
-                            if newPair[0] in specials or newPair[1] in specials:
-                                continue
-                            else:
-                                newpairs.add(newPair)
-                    p1Mol.dfixs[k] = (dfix[0], dfix[1], list(pairs.union(newpairs)))
-            # input()
-        # exit()
-        self.eqivSymmMap = equivSymmMap
-        # for eKey, newE in equivSymmMap.items():
-        #     print(eKey)
-        #     print(newE[0])
-        #     print(newE[1])
-        #     print()
+        for dfix in p1Mol.dfixs:
+            dfix.pairs = [pair for pair in dfix.pairs if not any(['_$' in a for a in  pair])]
+            if ShelxlRestraint.RESICLASSOVERRIDE:
+                dfix.setSuffix(ShelxlRestraint.RESICLASSOVERRIDE)
+        # for atom in self.atoms:
+        #     for i, symm in enumerate(symms):
+        #         resiKey = str(i + 2+resiOffset)
+        #
+        #         for k, dfix in enumerate(p1Mol.dfixs):
+        #             pairs = set(dfix[2])
+        #             newpairs = set()
+        #             for pair in pairs:
+        #                 ii = 0
+        #                 if '_$' in pair[0]:
+        #                     ii = 0
+        #                 elif '_$' in pair[1]:
+        #                     ii = 1
+        #                 if ii:
+        #                     continue
+        #                 if atom.name in pair:
+        #                     newPair = (pair[0] + '_' + resiKey, pair[1] + '_' + resiKey)
+        #                     if newPair[0] in specials or newPair[1] in specials:
+        #                         continue
+        #                     else:
+        #                         newpairs.add(newPair)
+        #             p1Mol.dfixs[k] = (dfix[0], dfix[1], list(pairs.union(newpairs)))
+        # self.eqivSymmMap = equivSymmMap
         p1Mol._finalizeDfix()
         p1AtomList = []
-        # exit()
-        for key, values in p1Atoms.items():
-            p1AtomList.append(ShelxlLine('RESI sym {}'.format(key)))
+
+        atomDict = {}
+        for atom in p1Mol.atoms:
+            try:
+                atomDict[int(atom.resiNum) if atom.resiNum else 0].append(atom)
+            except KeyError:
+                atomDict[int(atom.resiNum) if atom.resiNum else 0] = [atom]
+        for key in sorted(atomDict.keys()):
             # print( key)
-            for value in values:
-                p1AtomList.append(value)
-                # print(value.name)
-            # input()
+            atoms = atomDict[key]
+            cls = ShelxlRestraint.RESICLASSOVERRIDE if ShelxlRestraint.RESICLASSOVERRIDE else atoms[0].resiClass
+            if cls == 'symm':
+                key +=1
+            p1AtomList.append(ShelxlLine('RESI {} {}'.format(cls, key)))
+            for atom in atoms:
+                p1AtomList.append(atom)
+
+
+
+        # for atom in p1AtomList:
+        #     try:
+        #         print(atom.name)
+        #     except:
+        #         print(atom)
+        #
+        # exit()
+
         return p1Mol, p1AtomList
 
     def addAtom(self, atom):
@@ -1045,6 +1126,7 @@ class ShelxlMolecule(object):
             self.symms.append(SymmetryElement(symmData, centric=True))
             for symm in self.lattOps:
                 lattSymm = newSymm.applyLattSymm(symm)
+                lattSymm.centric = True
                 self.symms.append(lattSymm)
 
     def setCentric(self, value):
@@ -1067,18 +1149,13 @@ class ShelxlMolecule(object):
         """
         self.lattOps = lattOps
 
-    def addDfix(self, value, err, atomPairs):
-        """
-        Adds a DFIX restraint to the model.
-        :param value: float
-        :param err: float or None
-        :param atomPairs: list of tuples of strings
-        :return: None
-        """
-        self.dfixs.append((value, err, [tuple([atomName.upper() for atomName in pair]) for pair in atomPairs]))
+    def addDfix(self, restraint):
+        self.dfixs.append(restraint)
+        # self.dfixs.append((value, err, [tuple([atomName.upper() for atomName in pair]) for pair in atomPairs]))
 
-    def addDang(self, value, err, atomPairs):
-        self.dangs.append((value, err, [tuple([atomName.upper() for atomName in pair]) for pair in atomPairs]))
+    def addDang(self, restraint):
+        self.dfixs.append(restraint)
+        # self.dangs.append((value, err, [tuple([atomName.upper() for atomName in pair]) for pair in atomPairs]))
 
     def addEqiv(self, name, data):
         """
@@ -1109,6 +1186,8 @@ class ShelxlMolecule(object):
             # else:
             #     return [value for key, value in self.atomDict.items() if key.split('_')[0] == atomName]
             else:
+                for atom in self.atomDict.keys():
+                    print(atom)
                 raise KeyError('No atom named {}.'.format(atomName))
 
     def getVirtualAtom(self, atomName):
@@ -1151,6 +1230,9 @@ class ShelxlMolecule(object):
         for atom1, dfixs in self.dfixTable.items():
             for atom2, data in dfixs.items():
                 target, err = data
+                # print(target, err                      )
+                # print(atom1, atom2)
+                # exit()
                 a1s = self.getAtom(atom1)
                 a2s = self.getAtom(atom2)
                 if type(a1s) is list and type(a2s) is list:
@@ -1176,11 +1258,14 @@ class ShelxlMolecule(object):
 
     def _finalizeDfix(self):
         dfixTable = {atom.name.upper(): {} for atom in self.atoms}
-        for target, err, pairs in self.dfixs:
+        for dfix in self.dfixs:
+            target, err, pairs = dfix
+            cls = dfix.suffix
             if not err:
                 err = self.dfixErr
             for atom1, atom2 in pairs:
-                atom1 = atom1.upper()
+                atom1 = atom1.upper()+('_'+cls if cls else '')
+                atom2 = atom2.upper() + ('_'+cls if cls else '')
                 try:
                     tableRow1 = dfixTable[atom1]
                 except KeyError:
@@ -1191,7 +1276,7 @@ class ShelxlMolecule(object):
                 except KeyError:
                     tableRow1[atom2] = (target, err)
 
-                atom2 = atom2.upper()
+
                 try:
                     tableRow2 = dfixTable[atom2]
                 except KeyError:
@@ -1239,6 +1324,8 @@ class ShelxlReader(object):
 
     def __init__(self):
         self.currentResi = ('', 0)
+        self.currentAfix = 0
+        self.currentPart = 0
         self.lines = []
         self.atoms = []
         self._shelxlDict = {}
@@ -1257,7 +1344,11 @@ class ShelxlReader(object):
                 if line[0] is '+':
                     reader.insert(line[1:-1])
                     line = '+    ' + line[1:]
-                parser, line = parser(line)
+                try:
+                    parser, line = parser(line)
+                except KeyError:
+                    print('An unexpected error occured while reading line\n   {}'.format(line.strip()))
+                    exit(5)
                 if line:
                     self.lines.append(line)
         # for line in self.lines:
@@ -1272,6 +1363,10 @@ class ShelxlReader(object):
         ShelxlReader.CURRENTMOLECULE = None
         ShelxlReader.CURRENTINSTANCE = None
         self.molecule = molecule
+        # for atom in self.molecule:
+        #     print(atom.name, atom.resiNum)
+        # exit()
+        # print(len(molecule.atoms))
         return molecule
 
     def write(self, fileName='out.res'):
@@ -1298,8 +1393,6 @@ class ShelxlReader(object):
         :return: None
         """
         self.molecule, newAtoms = self.molecule.asP1(full=full)
-        replacedDfix = False
-        offset = 0
         for i, line in enumerate(self.lines):
             if line.key is 'latt':
                 if '-' in line.line or full:
@@ -1308,30 +1401,24 @@ class ShelxlReader(object):
                     self.lines[i] = ShelxlLine('LATT 1')
             if line.key is 'symm':
                 self.lines[i] = ShelxlLine('')
-            if line.key is 'hklf':
-                self.lines = self.lines[:i + offset] + newAtoms + self.lines[i + offset:]
+            if line.key is 'atom':
+                self.lines[i] = ShelxlLine('')
             if line.key is 'dfix':
-                # self.lines[i] = ShelxlLine('')
-                # print(line)
-                if replacedDfix:
-                    continue
-                replacedDfix = True
-                # print(len(self.molecule.dfixTable))
-                dfixLines = []
-                for value, err, allPairs in self.molecule.dfixs:
-                    for l in range(len(allPairs) // 4):
-                        l = 4 * l
-                        pairs = allPairs[l:l + 4]
-                        line = 'DFIX {value} {err} {pairs}'.format(value=value, err=err if err else '',
-                                                                   pairs=' '.join(
-                                                                       ['{} {}'.format(pair[0], pair[1]) for pair in
-                                                                        pairs]))
-                        dfixLines.append(ShelxlLine(line))
-                        # print(line)
-                before = len(self.lines)
-                self.lines = self.lines[:i] + dfixLines + self.lines[i:]
-                after = len(self.lines)
-                offset = after - before
+                self.lines[i] = ShelxlLine('')
+            if line.key is 'afix':
+                self.lines[i] = ShelxlLine('')
+            if line.key is 'resi':
+                self.lines[i] = ShelxlLine('')
+
+        for i, line in enumerate(self.lines):
+            if 'PLAN' in line.line:
+                self.lines = self.lines[:i] + self.molecule.dfixs + self.lines[i:]
+                break
+
+        for i, line in enumerate(self.lines):
+            if line.key is 'hklf':
+                self.lines = self.lines[:i] + newAtoms + self.lines[i:]
+                break
         # for line in self.lines:
         #     print(line.write())
         # self.write('p1.ins')
@@ -1345,6 +1432,12 @@ class ShelxlReader(object):
         :return: None
         """
         self.currentResi = (cls, num)
+
+    def setCurrentAfix(self, afix):
+        self.currentAfix = afix
+
+    def setCurrentPart(self, part):
+        self.currentPart = part
 
     def __getitem__(self, item):
         """
@@ -1419,8 +1512,8 @@ class LineParser(BaseParser):
                          'SADI': self.doNothing,
                          'SAME': self.doNothing,
                          'DANG': DangParser,
-                         'AFIX': self.doNothing,
-                         'PART': self.doNothing,
+                         'AFIX': AfixParser,
+                         'PART': PartParser,
                          'HKLF': HklfParser,
                          'ABIN': self.doNothing,
                          'ANIS': self.doNothing,
@@ -1507,18 +1600,23 @@ class AtomParser(BaseParser):
     Parser of atom records in shelx.res files.
     """
     RETURNTYPE = ShelxlAtom
+    KEY = 'atom'
 
     def get(self, previousParser):
         if not self.body.endswith('='):
             self.finished()
             return previousParser, self.RETURNTYPE(self.body, key=self.KEY,
-                                                   resi=ShelxlReader.CURRENTINSTANCE.currentResi)
+                                                   resi=ShelxlReader.CURRENTINSTANCE.currentResi,
+                                                   afix=ShelxlReader.CURRENTINSTANCE.currentAfix,
+                                                   part=ShelxlReader.CURRENTINSTANCE.currentPart)
         else:
             self.body = self.body[:-1]
             return self, None
 
     def __call__(self, line):
-        return LineParser(), ShelxlAtom(self.body + line, resi=ShelxlReader.CURRENTINSTANCE.currentResi)
+        return LineParser(), ShelxlAtom(self.body + line, resi=ShelxlReader.CURRENTINSTANCE.currentResi, key=self.KEY,
+                                                   afix=ShelxlReader.CURRENTINSTANCE.currentAfix,
+                                                   part=ShelxlReader.CURRENTINSTANCE.currentPart)
 
 
 class CellParser(BaseParser):
@@ -1577,6 +1675,26 @@ class SfacParser(BaseParser):
             ShelxlReader.CURRENTMOLECULE.addCustomSfac(words)
 
 
+class AfixParser(BaseParser):
+    RETURNTYPE = ShelxlLine
+    KEY = 'afix'
+
+    def finished(self):
+        body = [word for word in self.body.split() if word]
+        afix = body[1]
+        ShelxlReader.CURRENTINSTANCE.setCurrentAfix(afix)
+
+
+class PartParser(BaseParser):
+    RETURNTYPE = ShelxlLine
+    KEY = 'part'
+
+    def finished(self):
+        body = [word for word in self.body.split() if word]
+        part = body[1]
+        ShelxlReader.CURRENTINSTANCE.setCurrentPart(part)
+
+
 class LattParser(BaseParser):
     """
     Parser for LATT records in shelxl.res files.
@@ -1620,32 +1738,33 @@ class DfixParser(BaseParser):
     """
     Parser for DFIX records in shelxl.res files.
     """
-    RETURNTYPE = ShelxlLine
+    RETURNTYPE = ShelxlRestraint
     KEY = 'dfix'
 
     def finished(self):
-        data = [word for word in self.body.split() if word]
-        command = data.pop(0)
-        try:
-            _, resi = command.split('_')
-        except ValueError:
-            resi = None
-        value, data = float(data[0]), data[1:]
-        try:
-            err = float(data[0])
-        except ValueError:
-            err = None
-        else:
-            data = data[1:]
-        pairs = []
-        for i in range(len(data) // 2):
-            i, j = 2 * i, 2 * i + 1
-            name1, name2 = data[i], data[j]
-            if resi:
-                name1 = name1 + '_{}'.format(resi)
-                name2 = name2 + '_{}'.format(resi)
-            pairs.append((name1, name2))
-            ShelxlReader.CURRENTMOLECULE.addDfix(value, err, pairs)
+        # data = [word for word in self.body.split() if word]
+        # command = data.pop(0)
+        # try:
+        #     _, resi = command.split('_')
+        # except ValueError:
+        #     resi = None
+        # value, data = float(data[0]), data[1:]
+        # try:
+        #     err = float(data[0])
+        # except ValueError:
+        #     err = None
+        # else:
+        #     data = data[1:]
+        # pairs = []
+        # for i in range(len(data) // 2):
+        #     i, j = 2 * i, 2 * i + 1
+        #     name1, name2 = data[i], data[j]
+        #     if resi:
+        #         name1 = name1 + '_{}'.format(resi)
+        #         name2 = name2 + '_{}'.format(resi)
+        #     pairs.append((name1, name2))
+            restraint = ShelxlRestraint(self.body)
+            ShelxlReader.CURRENTMOLECULE.addDfix(restraint)
 
 
 class DangParser(BaseParser):
@@ -1656,28 +1775,8 @@ class DangParser(BaseParser):
     KEY = 'dfix'
 
     def finished(self):
-        data = [word for word in self.body.split() if word]
-        command = data.pop(0)
-        try:
-            _, resi = command.split('_')
-        except ValueError:
-            resi = None
-        value, data = float(data[0]), data[1:]
-        try:
-            err = float(data[0])
-        except ValueError:
-            err = None
-        else:
-            data = data[1:]
-        pairs = []
-        for i in range(len(data) // 2):
-            i, j = 2 * i, 2 * i + 1
-            name1, name2 = data[i], data[j]
-            if resi:
-                name1 = name1 + '_{}'.format(resi)
-                name2 = name2 + '_{}'.format(resi)
-            pairs.append((name1, name2))
-            ShelxlReader.CURRENTMOLECULE.addDang(value, err, pairs)
+        restraint = ShelxlRestraint(self.body)
+        ShelxlReader.CURRENTMOLECULE.addDang(restraint)
 
 
 class EqivParser(BaseParser):
