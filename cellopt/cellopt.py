@@ -796,6 +796,7 @@ class ShelxlAtom(ShelxlLine):
     """
     lastAfix = 0
     lastPart = 0
+    rewrite = False
 
     def __init__(self, line, virtual=False, key=None, resi=(0, ''), afix=0, part=0):
         self.afix = afix
@@ -835,12 +836,12 @@ class ShelxlAtom(ShelxlLine):
         Returns a string representation of a shelxl atom as expected by SHELXL.
         :return: str
         """
-        if not self.part == self.lastPart:
+        if not self.part == ShelxlAtom.lastPart:
             part = 'PART {}\n'.format(self.part)
             ShelxlAtom.lastpart = self.part
         else:
             part = ''
-        if not self.afix == self.lastAfix:
+        if not self.afix == ShelxlAtom.lastAfix:
             afix = 'AFIX {}\n'.format(self.afix)
             ShelxlAtom.lastAfix = self.afix
         else:
@@ -855,7 +856,10 @@ class ShelxlAtom(ShelxlLine):
             string = string.split()
             string = string[:7] + ['=\n   '] + string[7:] + ['\n']
             string = ' '.join(string)
-        return part+afix+ string
+        if ShelxlAtom.rewrite:
+            return part+afix+ string
+        else:
+            return string
 
 
 class ShelxlMolecule(object):
@@ -1393,6 +1397,7 @@ class ShelxlReader(object):
         :return: None
         """
         self.molecule, newAtoms = self.molecule.asP1(full=full)
+        ShelxlAtom.rewrite = True
         for i, line in enumerate(self.lines):
             if line.key is 'latt':
                 if '-' in line.line or full:
@@ -1406,6 +1411,8 @@ class ShelxlReader(object):
             if line.key is 'dfix':
                 self.lines[i] = ShelxlLine('')
             if line.key is 'afix':
+                self.lines[i] = ShelxlLine('')
+            if line.key is 'part':
                 self.lines[i] = ShelxlLine('')
             if line.key is 'resi':
                 self.lines[i] = ShelxlLine('')
