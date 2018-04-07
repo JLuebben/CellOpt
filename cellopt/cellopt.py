@@ -1225,7 +1225,7 @@ class ShelxlMolecule(object):
         weighted difference.
         :return: (float<mean>, float<weightedMean>)
         """
-        if not self.dfixTable:
+        if not any(self.dfixTable.values()):
             raise ValueError('No DFIX restraints found.')
         vSum = 0
         wSum = 0
@@ -1584,7 +1584,7 @@ class LineParser(BaseParser):
         line = line.rstrip('\n')
         if not line:
             return self.doNothing(line)
-        command = line[:4]
+        command = line[:4].upper()
         if command[0] is ' ':
             action = self.doNothing
         else:
